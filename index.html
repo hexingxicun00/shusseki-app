@@ -1,0 +1,1554 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>技術室 出席確認</title>
+<!-- ============================================================
+     技術室 出席確認アプリ
+     version 3.2  (2026-06-21)
+     変更履歴:
+       1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
+       1.1 黒板を手前に（先生視点の配置）
+       1.2 手描き図に合わせた4列×2段レイアウト
+       1.3 33番を最奥へ／席タップで名簿から割り当て方式に
+       1.4 33番を他の席と同じ大きさに／バージョン表記を追加
+       1.5 班名を机の中央に表示／全席の枠サイズを統一
+       1.6 5人目の席を全班に配置（最奥）／5人目は番号・名前を1行表示
+       1.7 名前タップで番号・名前・ふりがなを拡大表示し出欠入力／効果音／ふりがな登録
+       1.8 「出席確認」ボタンで1番から順に点呼／既定を「未確認(？)」に
+       1.9 点呼が途中で止まる不具合を修正
+       2.0 全画面表示ボタンを追加／配置変更は交換ではなくタップで削除（空席化）に変更
+       2.1 未配置の生徒を画面上部に色つきで一覧表示
+       2.2 未配置の生徒をタップ→席をタップで配置できるように
+       2.3 評価モードを追加（座席タップでA°/A/B/C°/C/欠席の6段階。記録にも評価列）
+       2.4 自己ホスティング対応（Claude外ではlocalStorageに保存）。GitHub Pages等でGAS記録も可
+       2.5 保存読込で画面が真っ白になる不具合を修正（先に描画＋保存読込にタイムアウト）
+       2.6 CSVを保存先を選んで保存（PCは保存ダイアログ／iPadは共有シート）
+       2.7 「データを出力」画面を追加。コピーして表計算に貼付＋ファイル保存も選択可
+       2.8 カードモード追加（🟨イエロー/🟥レッド/🟩グリーン。2枚で自動レッド、グリーンで相殺、1つ戻す対応）
+       2.9 名簿を添付ファイル/貼り付けで読み込む方式に変更（個人情報をコードに含めない）。学年→組の2段階選択。GASは1クラス1シート＋日付ごとに出欠/評価/カードの3列が増える形に変更
+       3.0 人数の多いクラスは1班5人で自動配置（33人以上で自動、設定で4人/5人を固定も可）。支援級の生徒を座席に小さな点でさりげなく表示
+       3.1 名簿をスプレッドシートのmeiboシートから自動取得（年度はじめに1回、転入学時は手動更新）。授業タイトルを入力でき、記録時にスプレッドシートの列名（日付＋タイトル）に反映。GASにdoGet（名簿取得）を追加
+       3.2 Claudeプレビュー内では「名簿を取得／更新」ボタンを無効化し理由を表示（外部通信不可のため）。取得処理に8秒のタイムアウトを追加（固まったまま無反応にならないように）（背景タップで終了しない／カード高さ固定／連打防止）
+     ============================================================ -->
+<style>
+  :root{
+    --paper:#f7f4ec;
+    --ink:#21261f;
+    --ink-soft:#5a6155;
+    --bench:#e7ddc8;
+    --bench-edge:#cdbf9f;
+    --line:#d8d0bd;
+    --present:#2f8f63;
+    --present-bg:#e2f0e6;
+    --absent:#cf4a36;
+    --absent-bg:#f7e1da;
+    --late:#cf8d1f;
+    --late-bg:#f8ecd2;
+    --early:#3f73aa;
+    --early-bg:#dfe9f4;
+    --signal:#df5a26;
+    --shadow:0 1px 0 rgba(0,0,0,.04), 0 4px 14px rgba(60,52,32,.07);
+    --mono:"SFMono-Regular",ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    line-height:1.4;
+    padding-bottom:96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:0 12px;}
+
+  /* ---- header ---- */
+  header{
+    position:sticky;top:0;z-index:20;
+    background:rgba(247,244,236,.94);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .head-row{display:flex;align-items:center;gap:10px;padding:10px 0 8px;}
+  .brand{font-size:15px;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
+  .brand small{display:block;font-size:10px;font-weight:600;color:var(--ink-soft);letter-spacing:.18em;}
+  .date-box{margin-left:auto;display:flex;align-items:center;gap:8px;}
+  .date-display{font-size:13px;font-weight:700;color:var(--ink);text-align:right;}
+  .date-display em{font-style:normal;color:var(--signal);}
+  .icon-btn{
+    width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:10px;
+    display:grid;place-items:center;font-size:17px;cursor:pointer;color:var(--ink-soft);
+  }
+  .icon-btn:active{background:#f0ece0;}
+
+  /* class tabs */
+  .tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none;}
+  .tabs::-webkit-scrollbar{display:none;}
+  .tab{
+    flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:999px;
+    padding:7px 14px;font-size:14px;font-weight:700;color:var(--ink-soft);cursor:pointer;
+  }
+  .tab.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+  .grades{display:flex;gap:6px;overflow-x:auto;padding:6px 0 0;scrollbar-width:none;}
+  .grades::-webkit-scrollbar{display:none;}
+  .grade{
+    flex:0 0 auto;border:1.5px solid var(--ink);background:#fff;border-radius:8px;
+    padding:5px 13px;font-size:13px;font-weight:800;color:var(--ink);cursor:pointer;
+  }
+  .grade.active{background:var(--ink);color:#fff;}
+  .empty-roster{
+    margin:18px 0;padding:16px;border:1.5px dashed var(--bench-edge);border-radius:12px;
+    background:#fbf8f0;font-size:14px;line-height:1.7;color:var(--ink-soft);text-align:center;
+  }
+  .empty-roster button{margin-top:8px;}
+
+  /* ---- summary ---- */
+  .summary{
+    display:flex;gap:6px;flex-wrap:wrap;padding:12px 0 4px;
+  }
+  .chip{
+    flex:1 1 auto;min-width:64px;border-radius:10px;padding:8px 6px;text-align:center;border:1px solid transparent;
+  }
+  .chip b{display:block;font-size:20px;font-family:var(--mono);line-height:1;}
+  .chip span{font-size:11px;font-weight:700;}
+  .chip.present{background:var(--present-bg);color:var(--present);}
+  .chip.absent{background:var(--absent-bg);color:var(--absent);}
+  .chip.late{background:var(--late-bg);color:var(--late);}
+  .chip.early{background:var(--early-bg);color:var(--early);}
+  .chip.unknown{background:#eae4d6;color:#7c7563;}
+  .chip.ev.a0{background:#d7ece0;color:#1f7a4d;} .chip.ev.a{background:#e2f0e6;color:#2f8f63;}
+  .chip.ev.b{background:#f8ecd2;color:#cf8d1f;} .chip.ev.c0{background:#fae3d2;color:#cf6a26;}
+  .chip.ev.c{background:#f7e1da;color:#cf4a36;} .chip.ev.abs{background:#e6e2da;color:#7c7563;}
+  .chip.ev.none{background:#eae4d6;color:#9a958a;}
+  .chip.cardr{background:#f7e1da;color:#cf4a36;} .chip.cardy{background:#f8ecd2;color:#cf8d1f;} .chip.cardg{background:#e2f0e6;color:#2f8f63;}
+  .modeseg{display:flex;gap:0;background:#ece6d8;border-radius:11px;padding:3px;margin:12px 0 0;}
+  .seg{flex:1;border:none;background:none;padding:9px;border-radius:9px;font-weight:800;font-size:14px;color:var(--ink-soft);cursor:pointer;font-family:var(--sans);}
+  .seg.on{background:#fff;color:var(--ink);box-shadow:var(--shadow);}
+
+  /* ---- room ---- */
+  .board{
+    margin:14px 0 10px;text-align:center;font-size:11px;font-weight:800;letter-spacing:.35em;
+    color:var(--ink-soft);
+    background:repeating-linear-gradient(135deg,#dfe3d6,#dfe3d6 6px,#d7dccd 6px,#d7dccd 12px);
+    border:1px solid var(--bench-edge);border-radius:8px;padding:7px;
+  }
+  .room-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .room{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;min-width:620px;}
+  .bench{
+    background:var(--bench);
+    border:1px solid var(--bench-edge);
+    border-radius:12px;
+    padding:8px 6px 9px;
+    box-shadow:var(--shadow);
+    position:relative;
+  }
+  .bench-no{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;pointer-events:none;
+    background:var(--ink);color:#fff;font-size:10px;font-weight:800;letter-spacing:.02em;
+    padding:2px 7px;border-radius:999px;box-shadow:0 0 0 3px var(--bench);
+  }
+  .seats{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:7px;position:relative;}
+  .seat{
+    background:#fff;border:1.5px solid var(--line);border-radius:8px;
+    height:56px;padding:4px 3px;display:flex;flex-direction:column;justify-content:center;
+    align-items:center;gap:1px;cursor:pointer;text-align:center;position:relative;overflow:hidden;
+    transition:transform .06s ease;
+  }
+  .seat.fifth{flex-direction:row;justify-content:center;gap:7px;height:30px;width:100%;margin-bottom:3px;}
+  .seat.fifth .num{font-size:11px;}
+  .seat.fifth .nm{display:block;-webkit-line-clamp:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62%;font-size:13px;}
+  .seat.fifth .st{font-size:9px;}
+  .seat.fifth.empty .nm{font-size:11px;}
+  .seat:active{transform:scale(.97);}
+  .seat .num{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--ink-soft);}
+  .seat .num.ghost{opacity:.45;}
+  .seat .nm{font-size:12px;font-weight:700;line-height:1.12;color:var(--ink);
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}
+  .seat .st{font-size:9px;font-weight:800;padding:0 5px;border-radius:6px;}
+  .seat.present{border-color:var(--present);}
+  .seat.present .st{background:var(--present-bg);color:var(--present);}
+  .seat.absent{border-color:var(--absent);background:var(--absent-bg);}
+  .seat.absent .st{background:var(--absent);color:#fff;}
+  .seat.late{border-color:var(--late);background:var(--late-bg);}
+  .seat.late .st{background:var(--late);color:#fff;}
+  .seat.early{border-color:var(--early);background:var(--early-bg);}
+  .seat.early .st{background:var(--early);color:#fff;}
+  .seat.unknown{border-color:#cbc3b0;}
+  .seat.unknown .st{background:#e8e2d4;color:#7c7563;}
+  .seat.ev-a0{border-color:#1f7a4d;} .seat.ev-a0 .st{background:#1f7a4d;color:#fff;}
+  .seat.ev-a{border-color:#2f8f63;} .seat.ev-a .st{background:#2f8f63;color:#fff;}
+  .seat.ev-b{border-color:#cf8d1f;} .seat.ev-b .st{background:#cf8d1f;color:#fff;}
+  .seat.ev-c0{border-color:#cf6a26;} .seat.ev-c0 .st{background:#cf6a26;color:#fff;}
+  .seat.ev-c{border-color:#cf4a36;} .seat.ev-c .st{background:#cf4a36;color:#fff;}
+  .seat.ev-abs{border-color:#9a958a;} .seat.ev-abs .st{background:#9a958a;color:#fff;}
+  .seat.ev-none{border-color:#cbc3b0;} .seat.ev-none .st{background:#e8e2d4;color:#7c7563;}
+  .seat.card-r{border-color:var(--absent);} .seat.card-y{border-color:var(--late);}
+  .seat.card-g{border-color:var(--present);} .seat.card-none{border-color:#cbc3b0;}
+  .seat.card-r .st,.seat.card-y .st,.seat.card-g .st,.seat.card-none .st{background:transparent;color:var(--ink);font-size:12px;letter-spacing:-1px;}
+  .seat.empty{background:#efeadd;border-style:dashed;border-color:var(--bench-edge);cursor:default;}
+  .seat.empty .nm{color:#b3a988;font-weight:600;font-size:11px;}
+  .seat.empty.editable{cursor:pointer;}
+  .seat.sel{outline:3px solid var(--signal);outline-offset:1px;border-color:var(--signal);}
+  .seat.support::after{
+    content:"";position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;
+    background:#9fb6cf;opacity:.85;
+  }
+  .seat.fifth.support::after{top:50%;right:6px;transform:translateY(-50%);}
+  .uchip.support, .prow.support{box-shadow:inset 2px 0 0 #9fb6cf;}
+  .rotate-hint{display:none;font-size:11px;color:var(--ink-soft);text-align:center;margin:4px 0 0;}
+  @media (max-width:620px){.rotate-hint{display:block;}}
+  .unplaced{display:none;margin:8px 0 2px;padding:9px 11px;border:1.5px solid var(--signal);background:#fdeee6;border-radius:12px;}
+  .unplaced.show{display:block;}
+  .unplaced .uh{font-size:11px;font-weight:800;color:var(--signal);margin-bottom:7px;letter-spacing:.02em;}
+  .uchips{display:flex;flex-wrap:wrap;gap:6px;}
+  .uchip{display:flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--signal);
+    border-radius:999px;padding:6px 11px;font-size:13px;font-weight:700;color:var(--ink);cursor:pointer;font-family:var(--sans);}
+  .uchip:active{transform:scale(.97);}
+  .uchip .un{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--signal);}
+  .uchip .ust{font-size:10px;font-weight:800;color:var(--ink-soft);}
+  .uchip.sel{background:var(--signal);color:#fff;border-color:var(--signal);}
+  .uchip.sel .un,.uchip.sel .ust{color:#fff;}
+  .appver{text-align:center;font-size:10px;color:var(--ink-soft);opacity:.7;margin:14px 0 4px;letter-spacing:.06em;}
+
+  /* edit banner */
+  .edit-note{
+    display:none;background:#fff4ec;border:1px solid #f0c3a4;color:#b04812;
+    border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;margin:6px 0 2px;
+  }
+  body.edit .edit-note{display:block;}
+  body.edit .seat{cursor:pointer;}
+
+  /* ---- bottom bar ---- */
+  .bar{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    background:rgba(247,244,236,.96);backdrop-filter:blur(8px);
+    border-top:1px solid var(--line);
+  }
+  .bar-in{max-width:980px;margin:0 auto;padding:10px 12px;display:flex;gap:8px;align-items:center;}
+  .btn{
+    border:none;border-radius:11px;font-family:var(--sans);font-weight:800;cursor:pointer;
+    padding:13px 14px;font-size:14px;display:flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink);flex:0 0 auto;}
+  .btn.ghost.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .btn.primary{background:var(--signal);color:#fff;flex:1 1 auto;}
+  .btn.primary:active{filter:brightness(.94);}
+  .btn.dark{background:var(--ink);color:#fff;flex:0 0 auto;}
+  .btn.dark:active{filter:brightness(1.15);}
+  .btn:disabled{opacity:.4;cursor:not-allowed;filter:none!important;}
+  .btn:disabled{opacity:.5;}
+
+  /* ---- modal ---- */
+  .scrim{position:fixed;inset:0;background:rgba(30,28,22,.5);z-index:40;display:none;align-items:flex-end;}
+  .scrim.show{display:flex;}
+  .sheet{
+    background:var(--paper);width:100%;max-width:620px;margin:0 auto;border-radius:18px 18px 0 0;
+    padding:18px 16px calc(18px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto;
+  }
+  .sheet h2{margin:2px 0 4px;font-size:16px;}
+  .sheet p{margin:0 0 12px;font-size:12.5px;color:var(--ink-soft);}
+  .sheet label{display:block;font-size:12px;font-weight:700;margin:10px 0 5px;}
+  .sheet input[type=text],.sheet input[type=url],.sheet input[type=date]{
+    width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:var(--sans);background:#fff;
+  }
+  .sheet .row{display:flex;gap:8px;margin-top:14px;}
+  .sheet .btn{flex:1;}
+  .ok-txt{color:var(--present);font-size:12px;font-weight:700;min-height:16px;margin-top:8px;}
+  .picker-list{margin-top:10px;max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#fff;}
+  .prow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;background:none;
+    padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-family:var(--sans);color:var(--ink);}
+  .prow:last-child{border-bottom:none;}
+  .prow:active{background:#f0ece0;}
+  .prow.here{background:var(--present-bg);}
+  .pno{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--ink-soft);min-width:30px;text-align:right;}
+  .pname{font-size:15px;font-weight:700;flex:1;}
+  .ploc{font-size:11px;font-weight:700;color:var(--ink-soft);white-space:nowrap;}
+  .prow.here .ploc{color:var(--present);}
+  .pempty{padding:18px;text-align:center;color:var(--ink-soft);font-size:13px;}
+  .sheet textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:var(--sans);background:#fff;resize:vertical;}
+  .sheet code{background:#efeadd;padding:1px 5px;border-radius:5px;font-family:var(--mono);font-size:12px;}
+  .toggle{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;margin:14px 0 4px;cursor:pointer;}
+  .toggle input{width:18px;height:18px;}
+
+  /* large student card */
+  .scrim.center{align-items:center;justify-content:center;padding:18px;}
+  .card{
+    background:var(--paper);border-radius:22px;padding:24px 20px 18px;width:100%;max-width:420px;
+    text-align:center;box-shadow:0 24px 70px rgba(30,28,22,.4);
+  }
+  .card-no{font-family:var(--mono);font-size:20px;font-weight:800;color:var(--signal);letter-spacing:.05em;}
+  .card-progress{display:none;font-size:13px;font-weight:800;color:var(--ink-soft);letter-spacing:.08em;margin-bottom:10px;}
+  .card-nav{display:none;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+  .card-nav button{border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px 8px;font-size:14px;font-weight:800;font-family:var(--sans);cursor:pointer;color:var(--ink-soft);}
+  .card-nav button:disabled{opacity:.4;}
+  .card-furi{font-size:19px;font-weight:700;color:var(--ink-soft);margin-top:12px;min-height:22px;letter-spacing:.04em;}
+  .card-furi.unset{font-size:13px;color:#b3a988;font-weight:600;}
+  .card-name{font-size:40px;font-weight:800;line-height:1.1;margin:4px 0 20px;word-break:break-all;
+    min-height:92px;display:flex;align-items:center;justify-content:center;}
+  .card-status{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .card-status.eval{grid-template-columns:repeat(3,1fr);}
+  .card-status.cards{grid-template-columns:1fr;}
+  .card-standing{font-size:16px;font-weight:800;margin:0 0 14px;letter-spacing:1px;}
+  .sbtn.card-y{border-color:var(--late);color:#9a6a12;} .sbtn.card-y:active{background:var(--late-bg);}
+  .sbtn.card-r{border-color:var(--absent);color:var(--absent);} .sbtn.card-r:active{background:var(--absent-bg);}
+  .sbtn.card-g{border-color:var(--present);color:var(--present);} .sbtn.card-g:active{background:var(--present-bg);}
+  .sbtn.ev-a0{border-color:#1f7a4d;color:#1f7a4d;} .sbtn.ev-a0.on{background:#1f7a4d;color:#fff;}
+  .sbtn.ev-a{border-color:#2f8f63;color:#2f8f63;} .sbtn.ev-a.on{background:#2f8f63;color:#fff;}
+  .sbtn.ev-b{border-color:#cf8d1f;color:#cf8d1f;} .sbtn.ev-b.on{background:#cf8d1f;color:#fff;}
+  .sbtn.ev-c0{border-color:#cf6a26;color:#cf6a26;} .sbtn.ev-c0.on{background:#cf6a26;color:#fff;}
+  .sbtn.ev-c{border-color:#cf4a36;color:#cf4a36;} .sbtn.ev-c.on{background:#cf4a36;color:#fff;}
+  .sbtn.ev-abs{border-color:#9a958a;color:#7c7563;} .sbtn.ev-abs.on{background:#9a958a;color:#fff;}
+  .sbtn{border:2px solid var(--line);background:#fff;border-radius:14px;padding:20px 8px;font-size:21px;
+    font-weight:800;font-family:var(--sans);cursor:pointer;color:var(--ink);transition:transform .05s ease;}
+  .sbtn:active{transform:scale(.96);}
+  .sbtn.present{border-color:var(--present);color:var(--present);}
+  .sbtn.present.on{background:var(--present);color:#fff;}
+  .sbtn.absent{border-color:var(--absent);color:var(--absent);}
+  .sbtn.absent.on{background:var(--absent);color:#fff;}
+  .sbtn.late{border-color:var(--late);color:var(--late);}
+  .sbtn.late.on{background:var(--late);color:#fff;}
+  .sbtn.early{border-color:var(--early);color:var(--early);}
+  .sbtn.early.on{background:var(--early);color:#fff;}
+  .card-edit{margin-top:16px;background:none;border:none;color:var(--ink-soft);font-size:12px;font-weight:700;text-decoration:underline;cursor:pointer;font-family:var(--sans);}
+  .card-close{display:block;width:100%;margin-top:8px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px;font-weight:800;font-size:15px;cursor:pointer;color:var(--ink);font-family:var(--sans);}
+  details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px;}
+  details summary{font-size:12.5px;font-weight:700;cursor:pointer;color:var(--ink-soft);}
+  pre{background:#1f241d;color:#eae3d2;border-radius:10px;padding:12px;font-size:11px;overflow:auto;font-family:var(--mono);line-height:1.5;margin-top:10px;}
+
+  /* toast */
+  .toast{
+    position:fixed;left:50%;bottom:84px;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;font-size:13px;font-weight:700;
+    z-index:50;opacity:0;pointer-events:none;transition:.25s;max-width:90vw;text-align:center;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="head-row">
+      <div class="brand">技術室 出席確認<small>SHUSSEKI</small></div>
+      <div class="date-box">
+        <div class="date-display" id="dateDisplay"></div>
+        <button class="icon-btn" id="fullBtn" aria-label="全画面表示">⛶</button>
+        <button class="icon-btn" id="openSettings" aria-label="設定">⚙</button>
+      </div>
+    </div>
+    <nav class="grades" id="grades"></nav>
+    <nav class="tabs" id="tabs"></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="modeseg">
+    <button id="segAtt" class="seg on">出欠</button>
+    <button id="segEval" class="seg">評価</button>
+    <button id="segCard" class="seg">カード</button>
+  </div>
+  <div class="summary" id="summary"></div>
+  <div class="empty-roster" id="emptyRoster" style="display:none;">
+    名簿がまだ読み込まれていません。<br>⚙設定の「名簿の読み込み」から、クラスの名簿（整理番号・氏名）を貼り付けるかファイルを選んで読み込んでください。
+    <br><button class="btn dark" id="emptyRosterBtn">名簿を読み込む</button>
+  </div>
+  <div class="unplaced" id="unplaced"></div>
+  <div class="edit-note" id="editNote">配置変更モード：座っている席をタップすると削除（空席化）、空席をタップすると名簿から割り当てできます。配置はクラスごとに自動保存されます。</div>
+  <div class="rotate-hint">横向き（landscape）にすると全体が見やすくなります</div>
+  <div class="room-scroll"><div class="room" id="room"></div></div>
+  <div class="board">黒板・教室前方（手前）</div>
+  <div class="appver">技術室 出席確認　v3.2（2026-06-21）</div>
+</main>
+
+<div class="bar">
+  <div class="bar-in">
+    <button class="btn ghost" id="editToggle">配置変更</button>
+    <button class="btn primary" id="rollBtn">出席確認</button>
+    <button class="btn dark" id="recordBtn">記録する</button>
+  </div>
+</div>
+
+<!-- settings sheet -->
+<div class="scrim" id="settingsScrim">
+  <div class="sheet">
+    <h2>設定</h2>
+    <p id="storeNote" style="font-weight:700;color:var(--ink-soft)"></p>
+
+    <label for="gasInput">GAS ウェブアプリURL</label>
+    <p style="margin:0 0 6px">スプレッドシートに記録したり、名簿を自動取得するために使います。未登録でも「データを出力」は使えます。</p>
+    <input type="url" id="gasInput" placeholder="https://script.google.com/macros/s/.../exec" inputmode="url" autocomplete="off">
+    <div class="ok-txt" id="settingsOk"></div>
+    <div class="row"><button class="btn primary" id="saveSettings">URLを保存</button></div>
+
+    <label>名簿の読み込み</label>
+    <p id="rosterFetchedNote" style="margin:0 0 6px;color:var(--ink-soft);"></p>
+    <div class="row"><button class="btn dark" id="rosterFetchBtn">スプレッドシートから名簿を取得／更新</button></div>
+    <p style="margin:8px 0 6px">名簿は基本的に<b>年度はじめに1回</b>取得すればOKです。<b>転入学があったときだけ</b>このボタンで更新してください（既存の座席配置・記録は保たれます）。spreadsheetの「meibo」シートに、整理番号・氏名・ふりがな・支援級の列で用意してください。</p>
+    <details>
+      <summary>うまく取得できないとき（手動で読み込む）</summary>
+      <p style="margin:10px 0 6px">名簿の行をコピーして貼り付けるか、CSV/TSVファイルを選んでください。整理番号の先頭2桁から学年・組を自動判定します（例：1101→1年1組）。複数クラス分まとめて貼ってもOKです。</p>
+      <input type="file" id="rosterFile" accept=".csv,.tsv,.txt">
+      <textarea id="rosterPaste" rows="5" placeholder="整理番号　氏名　ふりがな　支援級&#10;1101　天野耀　あまの　ひかる&#10;1102　池田心愛　いけだ　ここあ　支援"></textarea>
+      <div class="row"><button class="btn ghost" id="rosterApply">この内容を読み込む</button></div>
+    </details>
+    <div class="ok-txt" id="rosterOk"></div>
+    <div id="rosterList" style="margin:8px 0 4px;font-size:13px;color:var(--ink-soft);"></div>
+
+    <label for="dateInput">記録する日付</label>
+    <input type="date" id="dateInput">
+    <label for="titleInput">授業タイトル（任意・選択中のクラス）</label>
+    <p style="margin:0 0 6px">記録時にスプレッドシートの列名（例：6/30　キーホルダー制作1）に使われます。空欄なら日付だけになります。</p>
+    <input type="text" id="titleInput" placeholder="例：キーホルダー制作1" autocomplete="off">
+
+    <label>一括操作（選択中のクラス・日付）</label>
+    <div class="row">
+      <button class="btn ghost" id="allPresent">全員を出席</button>
+      <button class="btn ghost" id="allUnknown">全員を未確認に</button>
+    </div>
+
+    <label for="gsizeSelect">1班の人数（選択中のクラス）</label>
+    <select id="gsizeSelect">
+      <option value="">自動（33人以上のクラスは5人/班、それ以外は4人/班）</option>
+      <option value="4">4人/班に固定</option>
+      <option value="5">5人/班に固定</option>
+    </select>
+    <p id="gsizeNote" style="margin:4px 0 0;color:var(--ink-soft);font-size:13px;"></p>
+
+    <div class="row">
+      <button class="btn ghost" id="csvBtn">データを出力</button>
+    </div>
+
+    <label class="toggle"><input type="checkbox" id="soundChk"> 効果音を鳴らす</label>
+
+    <label for="furiBulk">ふりがな一括登録（選択中のクラス）</label>
+    <p style="margin:0 0 6px">1行に「出席番号␣ふりがな」。例：<code>1 あまの ひかる</code></p>
+    <textarea id="furiBulk" rows="4" placeholder="1 あまの ひかる&#10;3 いしい かすみ"></textarea>
+    <div class="row"><button class="btn ghost" id="furiApply">ふりがなを取り込む</button></div>
+
+    <details>
+      <summary>スプレッドシート側のコード（初回のみ設定）</summary>
+      <p style="margin-top:10px">記録先のスプレッドシートで「拡張機能 ▸ Apps Script」を開き、下を貼り付けて「デプロイ ▸ 新しいデプロイ ▸ ウェブアプリ（アクセス：全員）」。発行されたURLを上のGAS欄に登録してください。「meibo」シートから名簿を自動取得できるようになり、クラスごとに自動でシートができ、1行＝1生徒（整理番号・氏名）になります。記録するたびに、その日（＋授業タイトル）の「出欠」「評価」「カード」の3列が右側に追加されていきます。</p>
+      <pre id="gasCode"></pre>
+    </details>
+  </div>
+</div>
+
+<!-- seat picker sheet -->
+<div class="scrim" id="pickerScrim">
+  <div class="sheet">
+    <h2 id="pickerTitle">席に生徒を割り当て</h2>
+    <p id="pickerSub"></p>
+    <input type="text" id="pickerSearch" placeholder="出席番号・名前でしぼり込み" autocomplete="off">
+    <div class="picker-list" id="pickerList"></div>
+    <div class="row">
+      <button class="btn ghost" id="pickerCancel">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- large student card (出席入力) -->
+<div class="scrim center" id="cardScrim">
+  <div class="card">
+    <div class="card-progress" id="cardProg"></div>
+    <div class="card-no" id="cardNo"></div>
+    <div class="card-furi" id="cardFuri"></div>
+    <div class="card-name" id="cardName"></div>
+    <div class="card-standing" id="cardStanding"></div>
+    <div class="card-status" id="cardStatus"></div>
+    <button class="card-edit" id="cardUndo">↩ 1つ戻す</button>
+    <div class="card-nav" id="cardNav">
+      <button id="rollBack">← 前へ</button>
+      <button id="rollSkip">未確認のまま次へ →</button>
+    </div>
+    <button class="card-edit" id="cardFuriEdit">ふりがなを編集</button>
+    <button class="card-close" id="cardClose">閉じる</button>
+  </div>
+</div>
+
+<!-- data export sheet -->
+<div class="scrim" id="exportScrim">
+  <div class="sheet">
+    <h2>データを出力</h2>
+    <p>下のデータを「コピー」して、スプレッドシートのセルに貼り付けると、自動で列に分かれて入ります（タブ区切り）。保存が使える環境なら「ファイルで保存」も選べます。</p>
+    <textarea id="exportText" rows="8" readonly></textarea>
+    <div class="row">
+      <button class="btn primary" id="exportCopy">コピー</button>
+      <button class="btn ghost" id="exportSave">ファイルで保存</button>
+    </div>
+    <div class="ok-txt" id="exportOk"></div>
+    <div class="row"><button class="btn ghost" id="exportClose">閉じる</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ 名簿（1年1組〜7組）============ */
+let ROSTER = {};
+function rosterOf(classId){ return ROSTER[classId] || []; }
+function classIds(){ return Object.keys(ROSTER).sort(); }
+function gradesAvail(){
+  const s=new Set(); classIds().forEach(id=>s.add(id[0]));
+  return Array.from(s).sort();
+}
+function classesOfGrade(g){ return classIds().filter(id=>id[0]===g); }
+const MAIN_SEATS = 32;           // 1〜32番＝8班×4人
+const SEAT_TOTAL = 40;           // ＋各班に5人目の席（index32〜39）
+const STATUS_ORDER = ["present","absent","late","early"];
+const STATUS = {
+  unknown:{label:"未確認", mark:"？"},
+  present:{label:"出席", mark:"出席"}, absent:{label:"欠席", mark:"欠席"},
+  late:{label:"遅刻", mark:"遅刻"}, early:{label:"早退", mark:"早退"}
+};
+const SUMMARY_ORDER=["present","absent","late","early","unknown"];
+function classLabel(id){ return id[0]+"年"+id[1]+"組"; }
+function nameOf(classId,sid){ const e=rosterOf(classId).find(r=>r[0]===sid); return e?e[1]:""; }
+function attNoOf(sid){ return parseInt(sid.slice(2),10); }        // 出席番号
+// 各班の「5人目の席」index：8班＝32(出席番号33番)、1〜7班＝33〜39（既定は空席）
+function fifthIdx(g){ return g===8 ? 32 : 32+g; }
+function isFifthIdx(i){ return i>=32; }
+function groupOfIdx(i){
+  if(i<32) return Math.floor(i/4)+1;   // 主席：班1〜8
+  if(i===32) return 8;                 // 8班の5人目＝33番
+  return i-32;                         // 33〜39 → 班1〜7の5人目
+}
+function seatLabel(i){
+  const g=groupOfIdx(i);
+  return isFifthIdx(i) ? `${g}班・5人目` : `${g}班・${i+1}番`;
+}
+const EVAL_LEVELS=["A°","A","B","C°","C","欠席"];
+function evalKey(v){ return ({"A°":"a0","A":"a","B":"b","C°":"c0","C":"c","欠席":"abs"})[v]||"none"; }
+
+/* ============ 保存（Claude内=window.storage / 外部公開=localStorage）============ */
+const K_SEAT="att.seating.v3", K_URL="att.gasurl.v1", K_REC="att.records.v1", K_FURI="att.furigana.v1", K_MUTE="att.mute.v1", K_EVAL="att.evals.v1", K_CARDS="att.cards.v1", K_ROSTER="att.roster.v1", K_SUPPORT="att.support.v1", K_GSIZE="att.groupsize.v1", K_ROSTER_FETCHED="att.rosterfetched.v1", K_TITLE="att.titles.v1";
+const HAS_WS = !!(typeof window!=="undefined" && window.storage);
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function sGet(k){
+  if(HAS_WS){
+    const real=(async()=>{ try{ const r=await window.storage.get(k); return r?r.value:null; }catch(e){ return null; } })();
+    return Promise.race([ real, new Promise(res=>setTimeout(()=>res(null),1200)) ]);  // 応答が無ければ諦める
+  }
+  return Promise.resolve(lsGet(k));      // 外部公開時はブラウザのlocalStorageに保存
+}
+async function sSet(k,v){
+  if(HAS_WS){ try{ await window.storage.set(k,v); }catch(e){} return; }
+  lsSet(k,v);
+}
+
+/* ============ 状態 ============ */
+const state = {
+  classId:null,
+  grade:null,
+  date:todayStr(),
+  mode:"attendance",     // or "edit"
+  seating:{},            // classId -> [sid|null] × 32
+  records:{},            // classId -> { date -> { sid:status } }
+  gasUrl:"",
+  furigana:{},           // sid -> ふりがな
+  muted:false,
+  entry:"att",           // "att"=出欠 / "eval"=評価 / "card"=カード
+  evals:{},              // classId -> { date -> { sid: 評価 } }
+  cards:{},              // classId -> { date -> { sid: {y,r,g} } }
+  support:{},            // sid -> true（支援級）
+  groupSize:{},          // classId -> "4"|"5"（空=自動）
+  rosterFetched:"",      // 名簿を最後にスプレッドシートから取得した日付
+  titles:{},             // classId -> { date -> 授業タイトル }
+  pending:null,          // 配置待ちの生徒sid（未配置をタップ→席をタップで配置）
+  sel:null               // edit時の選択座席index
+};
+function supportOf(sid){ return !!state.support[sid]; }
+function groupSizeFor(classId){
+  const ov=state.groupSize[classId];
+  if(ov==="4"||ov==="5") return parseInt(ov,10);
+  return rosterOf(classId).length>32 ? 5 : 4;
+}
+function titleOf(classId,date){ return (state.titles[classId] && state.titles[classId][date]) || ""; }
+function setTitle(classId,date,v){
+  state.titles[classId]=state.titles[classId]||{};
+  if(v) state.titles[classId][date]=v; else delete state.titles[classId][date];
+  sSet(K_TITLE, JSON.stringify(state.titles));
+}
+function furiOf(sid){ return state.furigana[sid] || ""; }
+function setFuri(sid,v){ if(v) state.furigana[sid]=v; else delete state.furigana[sid]; sSet(K_FURI,JSON.stringify(state.furigana)); }
+function evalOf(classId,sid){ return (state.evals[classId] && state.evals[classId][state.date] && state.evals[classId][state.date][sid]) || ""; }
+function setEval(classId,sid,v){
+  state.evals[classId]=state.evals[classId]||{};
+  state.evals[classId][state.date]=state.evals[classId][state.date]||{};
+  if(v) state.evals[classId][state.date][sid]=v; else delete state.evals[classId][state.date][sid];
+  sSet(K_EVAL,JSON.stringify(state.evals));
+}
+function cardsOf(classId,sid){
+  const d=state.cards[classId] && state.cards[classId][state.date] && state.cards[classId][state.date][sid];
+  return d ? {y:d.y||0, r:d.r||0, g:d.g||0} : {y:0, r:0, g:0};
+}
+function setCards(classId,sid,obj){
+  state.cards[classId]=state.cards[classId]||{};
+  state.cards[classId][state.date]=state.cards[classId][state.date]||{};
+  state.cards[classId][state.date][sid]=obj;
+  sSet(K_CARDS,JSON.stringify(state.cards));
+}
+function cardMark(c){
+  let s="";
+  s+="🟥".repeat(Math.min(c.r,3));
+  s+="🟨".repeat(Math.min(c.y,2));
+  s+="🟩".repeat(Math.min(c.g,3));
+  return s || "—";
+}
+
+function todayStr(){
+  const d=new Date(); const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+function fmtDate(s){
+  const [y,m,d]=s.split("-").map(Number);
+  const wd=["日","月","火","水","木","金","土"][new Date(y,m-1,d).getDay()];
+  return {jp:`${y}年${m}月${d}日`, wd};
+}
+function defaultSeating(classId){
+  // 1班あたり4人（既定）または5人（人数が多いクラスは自動／設定で固定可）
+  const arr=new Array(SEAT_TOTAL).fill(null);
+  const gs=groupSizeFor(classId);
+  if(gs===5){
+    rosterOf(classId).forEach(([id])=>{
+      const a=attNoOf(id);
+      if(a<1 || a>40) return;
+      const g=Math.min(8, Math.ceil(a/5));      // 1〜5番目→1班、6〜10番目→2班…
+      const s=(a-1)%5;
+      arr[ s<4 ? (g-1)*4+s : fifthIdx(g) ]=id;
+    });
+  }else{
+    // 席番号＝出席番号（1〜33番→index0〜32）。5人目の空き席(index33〜39)は空席。
+    rosterOf(classId).forEach(([id])=>{
+      const no=attNoOf(id);
+      if(no>=1 && no<=33) arr[no-1]=id;
+    });
+  }
+  return arr;
+}
+function seatingFor(classId){
+  if(!state.seating[classId]) state.seating[classId]=defaultSeating(classId);
+  return state.seating[classId];
+}
+function statusOf(classId,sid){
+  return (state.records[classId] && state.records[classId][state.date] && state.records[classId][state.date][sid]) || "unknown";
+}
+function setStatus(classId,sid,st){
+  state.records[classId]=state.records[classId]||{};
+  state.records[classId][state.date]=state.records[classId][state.date]||{};
+  state.records[classId][state.date][sid]=st;
+}
+
+/* ============ 描画 ============ */
+const $=s=>document.querySelector(s);
+function pickClass(id){ state.classId=id; state.grade=id[0]; state.sel=null; state.pending=null; renderAll(); }
+function pickGrade(g){
+  state.grade=g;
+  const cs=classesOfGrade(g);
+  if(cs.length && !cs.includes(state.classId)) state.classId=cs[0];
+  renderAll();
+}
+function renderTabs(){
+  const grades=gradesAvail();
+  const gEl=$("#grades"); gEl.innerHTML="";
+  if(grades.length<=1){ gEl.style.display="none"; }
+  else{
+    gEl.style.display="";
+    grades.forEach(g=>{
+      const b=document.createElement("button");
+      b.className="grade"+(g===state.grade?" active":"");
+      b.textContent=g+"年";
+      b.onclick=()=>pickGrade(g);
+      gEl.appendChild(b);
+    });
+  }
+  const t=$("#tabs"); t.innerHTML="";
+  const ids = state.grade ? classesOfGrade(state.grade) : classIds();
+  ids.forEach(id=>{
+    const b=document.createElement("button");
+    b.className="tab"+(id===state.classId?" active":"");
+    b.textContent=classLabel(id);
+    b.onclick=()=>pickClass(id);
+    t.appendChild(b);
+  });
+}
+function renderDate(){
+  const f=fmtDate(state.date);
+  const isToday=state.date===todayStr();
+  $("#dateDisplay").innerHTML = (isToday?'<em>今日</em> ':'') + `${f.jp}<br>（${f.wd}）`;
+  $("#dateInput").value=state.date;
+}
+function renderSummary(){
+  const seats=seatingFor(state.classId);
+  if(state.entry==="card"){
+    let tr=0,ty=0,tg=0;
+    seats.forEach(sid=>{ if(sid){ const c=cardsOf(state.classId,sid); tr+=c.r; ty+=c.y; tg+=c.g; } });
+    $("#summary").innerHTML =
+      `<div class="chip cardr"><b>${tr}</b><span>🟥レッド</span></div>`+
+      `<div class="chip cardy"><b>${ty}</b><span>🟨イエロー</span></div>`+
+      `<div class="chip cardg"><b>${tg}</b><span>🟩グリーン</span></div>`;
+    return;
+  }
+  if(state.entry==="eval"){
+    const c={}; EVAL_LEVELS.forEach(l=>c[l]=0); let none=0;
+    seats.forEach(sid=>{ if(sid){ const ev=evalOf(state.classId,sid); if(ev) c[ev]++; else none++; } });
+    let html=EVAL_LEVELS.map(l=>`<div class="chip ev ${evalKey(l)}"><b>${c[l]}</b><span>${l}</span></div>`).join("");
+    html+=`<div class="chip ev none"><b>${none}</b><span>未</span></div>`;
+    $("#summary").innerHTML=html;
+  }else{
+    const c={present:0,absent:0,late:0,early:0,unknown:0};
+    seats.forEach(sid=>{ if(sid) c[statusOf(state.classId,sid)]++; });
+    $("#summary").innerHTML = SUMMARY_ORDER.map(k=>
+      `<div class="chip ${k}"><b>${c[k]}</b><span>${STATUS[k].label}</span></div>`
+    ).join("");
+  }
+}
+function seatCell(seats,idx,opts){
+  opts=opts||{};
+  const fifth=!!opts.fifth;
+  const sid=seats[idx];
+  const seat=document.createElement("div");
+  let cls="seat"+(fifth?" fifth":"");
+  if(sid){
+    let mark, scls;
+    if(state.entry==="eval"){
+      const ev=evalOf(state.classId,sid);
+      scls = ev ? "ev-"+evalKey(ev) : "ev-none";
+      mark = ev || "—";
+    }else if(state.entry==="card"){
+      const c=cardsOf(state.classId,sid);
+      scls = c.r>0?"card-r":c.y>0?"card-y":c.g>0?"card-g":"card-none";
+      mark = cardMark(c);
+    }else{
+      const st=statusOf(state.classId,sid);
+      scls = st;
+      mark = STATUS[st].mark||STATUS[st].label;
+    }
+    seat.className=cls+" "+scls+(supportOf(sid)?" support":"");
+    seat.innerHTML=`<span class="num">${attNoOf(sid)}番</span><span class="nm">${nameOf(state.classId,sid)}</span><span class="st">${mark}</span>`;
+  }else{
+    seat.className=cls+" empty"+(state.mode==="edit"?" editable":"");
+    const ghost = fifth ? "5人目" : (idx+1)+"番";
+    seat.innerHTML=`<span class="num ghost">${ghost}</span><span class="nm">空席</span>`;
+  }
+  seat.onclick=()=>onSeat(idx);
+  return seat;
+}
+function renderRoom(){
+  const room=$("#room"); room.innerHTML="";
+  const seats=seatingFor(state.classId);
+  // 上段＝奥（2,4,6,8班）／下段＝手前（1,3,5,7班）。黒板は手前。
+  const TABLE_ORDER=[2,4,6,8,1,3,5,7];
+  for(const g of TABLE_ORDER){
+    const bench=document.createElement("div"); bench.className="bench";
+    const base=(g-1)*4;   // 0始まりのindex
+    // 5人目の席（最奥・1行表示）。全班に配置。
+    bench.appendChild(seatCell(seats, fifthIdx(g), {fifth:true}));
+    // 4人の主席：上段(奥)＝base+1,base+3／下段(手前)＝base+0,base+2（index）
+    const grid=document.createElement("div"); grid.className="seats";
+    [base+1, base+3, base+0, base+2].forEach(i=>grid.appendChild(seatCell(seats,i)));
+    // 班名は机の中央に表示
+    const no=document.createElement("span"); no.className="bench-no"; no.textContent=`${g}班`;
+    grid.appendChild(no);
+    bench.appendChild(grid);
+    room.appendChild(bench);
+  }
+}
+function unseatedList(){
+  const seats=seatingFor(state.classId);
+  const placed=new Set(seats.filter(Boolean));
+  return rosterOf(state.classId).filter(([id])=>!placed.has(id));
+}
+function renderUnplaced(){
+  const box=$("#unplaced");
+  const list=unseatedList();
+  if(!list.length){ box.classList.remove("show"); box.innerHTML=""; state.pending=null; return; }
+  box.classList.add("show");
+  const head = state.pending
+    ? `「${attNoOf(state.pending)}番 ${nameOf(state.classId,state.pending)}」を置く席をタップ（もう一度タップで取消）`
+    : `未配置の生徒（${list.length}人）— 生徒をタップ → 置く席をタップで配置`;
+  box.innerHTML=`<div class="uh">${head}</div>`;
+  const wrap=document.createElement("div"); wrap.className="uchips";
+  list.forEach(([id,name])=>{
+    const mark = state.entry==="eval" ? (evalOf(state.classId,id)||"—") : (STATUS[statusOf(state.classId,id)].mark);
+    const c=document.createElement("button");
+    c.className="uchip"+(state.pending===id?" sel":"")+(supportOf(id)?" support":"");
+    c.innerHTML=`<span class="un">${attNoOf(id)}番</span>${name}<span class="ust">${mark}</span>`;
+    c.onclick=()=>togglePending(id);
+    wrap.appendChild(c);
+  });
+  box.appendChild(wrap);
+}
+function togglePending(id){
+  state.pending = (state.pending===id) ? null : id;
+  renderUnplaced();
+  if(state.pending) toast(`置く席をタップしてください`);
+}
+function placePending(idx){
+  const seats=seatingFor(state.classId);
+  const sid=state.pending; state.pending=null;
+  const old=seats.indexOf(sid); if(old!==-1) seats[old]=null;
+  seats[idx]=sid;   // すでに誰かがいれば、その生徒は未配置になる
+  sSet(K_SEAT,JSON.stringify(state.seating));
+  renderRoom(); renderSummary(); renderUnplaced();
+  toast(`${attNoOf(sid)}番 ${nameOf(state.classId,sid)} を ${seatLabel(idx)} に配置`);
+}
+function renderAll(){
+  document.body.classList.toggle("edit",state.mode==="edit");
+  $("#editToggle").classList.toggle("on",state.mode==="edit");
+  $("#segAtt").classList.toggle("on",state.entry==="att");
+  $("#segEval").classList.toggle("on",state.entry==="eval");
+  $("#segCard").classList.toggle("on",state.entry==="card");
+  const rb=$("#rollBtn");
+  if(state.entry==="card"){ rb.style.display="none"; }
+  else { rb.style.display=""; rb.textContent = state.entry==="eval" ? "評価をつける" : "出席確認"; }
+  const hasRoster = classIds().length>0;
+  $("#emptyRoster").style.display = hasRoster ? "none" : "block";
+  document.querySelector(".modeseg").style.display = hasRoster ? "" : "none";
+  document.querySelector(".room-scroll").style.display = hasRoster ? "" : "none";
+  document.querySelector(".board").style.display = hasRoster ? "" : "none";
+  $(".bar").style.display = hasRoster ? "" : "none";
+  renderTabs(); renderDate();
+  if(hasRoster){ renderSummary(); renderRoom(); renderUnplaced(); }
+  else { $("#summary").innerHTML=""; $("#unplaced").innerHTML=""; }
+}
+function setEntry(e){ state.entry=e; state.pending=null; closeCard(); renderAll(); }
+$("#segAtt").onclick=()=>setEntry("att");
+$("#segEval").onclick=()=>setEntry("eval");
+$("#segCard").onclick=()=>setEntry("card");
+
+/* ============ 操作 ============ */
+function onSeat(idx){
+  const seats=seatingFor(state.classId);
+  if(state.pending){ placePending(idx); return; }   // 未配置の生徒を配置
+  if(state.mode==="edit"){
+    const sid=seats[idx];
+    if(sid){
+      seats[idx]=null;                       // 削除（席から外す）
+      sSet(K_SEAT,JSON.stringify(state.seating));
+      renderRoom(); renderSummary(); renderUnplaced();
+      toast(`${attNoOf(sid)}番 ${nameOf(state.classId,sid)} を席から削除しました`);
+    }else{
+      openSeatPicker(idx);                    // 空席に割り当て
+    }
+  }else{
+    const sid=seats[idx]; if(!sid) return;
+    openCard(sid);
+  }
+}
+
+/* ============ 効果音（Web Audio）============ */
+let actx=null;
+function audio(){
+  if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+  if(actx.state==="suspended") actx.resume();
+  return actx;
+}
+function beep(freq,start,dur,vol,type){
+  const ac=audio(); if(!ac) return;
+  const t0=ac.currentTime+start;
+  const o=ac.createOscillator(), g=ac.createGain();
+  o.type=type||"sine"; o.frequency.value=freq;
+  g.gain.setValueAtTime(0,t0);
+  g.gain.linearRampToValueAtTime(vol,t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t0); o.stop(t0+dur+0.03);
+}
+function playStatusSound(st){
+  if(state.muted) return;
+  if(st==="present"){ beep(660,0,.12,.25); beep(990,.085,.16,.25); }     // 明るい上昇2音
+  else if(st==="late"){ beep(620,0,.1,.22); beep(620,.12,.13,.22); }     // 同音2回
+  else if(st==="early"){ beep(760,0,.11,.22); beep(520,.1,.16,.22); }    // 下降2音
+  else if(st==="absent"){ beep(392,0,.22,.2,"triangle"); }               // 低めの1音
+}
+function playEvalSound(v){
+  if(state.muted) return;
+  if(v==="欠席"){ beep(392,0,.22,.2,"triangle"); return; }
+  const m={"A°":[880,1050],"A":[784,932],"B":[660,0],"C°":[560,0],"C":[480,0]}[v]||[660,0];
+  beep(m[0],0,.12,.24); if(m[1]) beep(m[1],.09,.15,.24);
+}
+function playCardSound(v){
+  if(state.muted) return;
+  if(v==="yellow"){ beep(680,0,.13,.24); }
+  else if(v==="red"){ beep(360,0,.16,.22,"triangle"); beep(300,.14,.2,.22,"triangle"); }
+  else if(v==="green"){ beep(620,0,.1,.22); beep(880,.08,.14,.22); }
+}
+
+/* ============ 大きな出席カード ＋ 出席確認（点呼）============ */
+let cardSid=null, rollMode=false, rollList=[], rollPos=0, cardBusy=false;
+function renderCardButtons(sid){
+  const box=$("#cardStatus");
+  box.classList.toggle("eval", state.entry==="eval");
+  box.classList.toggle("cards", state.entry==="card");
+  box.innerHTML="";
+  if(state.entry==="card"){
+    [{v:"yellow",label:"🟨 イエロー",cls:"card-y"},
+     {v:"red",label:"🟥 レッド",cls:"card-r"},
+     {v:"green",label:"🟩 グリーン（イエロー1枚カット）",cls:"card-g"}].forEach(it=>{
+      const b=document.createElement("button");
+      b.className="sbtn "+it.cls; b.textContent=it.label;
+      b.onclick=()=>giveCard(it.v);
+      box.appendChild(b);
+    });
+    return;
+  }
+  let items, cur;
+  if(state.entry==="eval"){
+    cur=evalOf(state.classId,sid);
+    items=EVAL_LEVELS.map(v=>({v,label:v,cls:"ev-"+evalKey(v)}));
+  }else{
+    cur=statusOf(state.classId,sid);
+    items=[["present","出席"],["absent","欠席"],["late","遅刻"],["early","早退"]].map(([v,label])=>({v,label,cls:v}));
+  }
+  items.forEach(it=>{
+    const b=document.createElement("button");
+    b.className="sbtn "+it.cls+(it.v===cur?" on":"");
+    b.textContent=it.label;
+    b.onclick=()=>chooseValue(it.v);
+    box.appendChild(b);
+  });
+}
+let cardUndoStack=[];
+function updateStanding(sid){
+  const c=cardsOf(state.classId,sid);
+  $("#cardStanding").textContent=`現在　🟥${c.r}　🟨${c.y}　🟩${c.g}`;
+}
+function giveCard(v){
+  if(!cardSid) return;
+  const c=cardsOf(state.classId,cardSid);
+  cardUndoStack.push({sid:cardSid, before:{y:c.y,r:c.r,g:c.g}});
+  if(cardUndoStack.length>40) cardUndoStack.shift();
+  let msg="";
+  if(v==="yellow"){
+    if(c.g>0){ c.g-=1; msg="🟩で相殺（イエローなし）"; }
+    else { c.y+=1; if(c.y>=2){ c.y-=2; c.r+=1; msg="🟨2枚 → 🟥レッド！"; } else msg="🟨イエロー"; }
+  }else if(v==="green"){
+    if(c.y>0){ c.y-=1; msg="🟨を1枚カット"; } else { c.g+=1; msg="🟩グリーン（貯金）"; }
+  }else if(v==="red"){
+    c.r+=1; msg="🟥レッド";
+  }
+  setCards(state.classId,cardSid,c);
+  playCardSound(v);
+  updateStanding(cardSid);
+  renderSummary(); renderRoom();
+  $("#cardUndo").disabled = cardUndoStack.length===0;
+  toast(`${attNoOf(cardSid)}番 ${nameOf(state.classId,cardSid)}：${msg}`);
+}
+function undoCard(){
+  if(!cardUndoStack.length) return;
+  const last=cardUndoStack.pop();
+  setCards(state.classId,last.sid,last.before);
+  if(cardSid) updateStanding(cardSid);
+  renderSummary(); renderRoom();
+  $("#cardUndo").disabled = cardUndoStack.length===0;
+  toast("1つ戻しました");
+}
+$("#cardUndo").onclick=undoCard;
+function openCard(sid){
+  cardSid=sid; cardBusy=false;
+  const isCard = state.entry==="card";
+  const head = isCard ? "カード" : (state.entry==="eval" ? "評価入力" : "出席確認");
+  $("#cardProg").style.display = rollMode ? "block" : "none";
+  if(rollMode) $("#cardProg").textContent = `${head}　${rollPos+1} / ${rollList.length}`;
+  $("#cardNav").style.display = rollMode ? "grid" : "none";
+  $("#rollBack").disabled = (rollPos===0);
+  $("#cardClose").textContent = rollMode ? "やめる" : "閉じる";
+  $("#cardStanding").style.display = isCard ? "block" : "none";
+  $("#cardUndo").style.display = isCard ? "block" : "none";
+  if(isCard){ updateStanding(sid); $("#cardUndo").disabled = cardUndoStack.length===0; }
+  $("#cardNo").textContent=`${attNoOf(sid)}番`;
+  const furi=furiOf(sid);
+  const fEl=$("#cardFuri");
+  fEl.textContent = furi || "（ふりがな未設定）タップして編集";
+  fEl.classList.toggle("unset", !furi);
+  $("#cardName").textContent=nameOf(state.classId,sid);
+  renderCardButtons(sid);
+  $("#cardScrim").classList.add("show");
+}
+function chooseValue(v){
+  if(!cardSid || cardBusy) return;
+  cardBusy=true;
+  if(state.entry==="eval"){
+    setEval(state.classId,cardSid,v);
+    playEvalSound(v);
+  }else{
+    setStatus(state.classId,cardSid,v);
+    sSet(K_REC,JSON.stringify(state.records));
+    playStatusSound(v);
+  }
+  renderCardButtons(cardSid);
+  renderSummary(); renderRoom(); renderUnplaced();
+  setTimeout(()=>{ cardBusy=false; if(rollMode) advanceRoll(); else closeCard(); }, 260);
+}
+function closeCard(){ $("#cardScrim").classList.remove("show"); cardSid=null; rollMode=false; }
+/* 出席確認/評価（点呼）：1番から順に大きく表示。選択で次へ。最後まで行くと終了 */
+function startRoll(){
+  rollList=rosterOf(state.classId).map(r=>r[0]);   // 出席番号順
+  if(!rollList.length) return;
+  rollMode=true; rollPos=0;
+  openCard(rollList[0]);
+}
+function advanceRoll(){
+  rollPos++;
+  if(rollPos < rollList.length) openCard(rollList[rollPos]);
+  else finishRoll();
+}
+function rollBackStep(){ if(rollMode && rollPos>0){ rollPos--; openCard(rollList[rollPos]); } }
+function rollSkipStep(){ if(rollMode) advanceRoll(); }   // そのまま次へ
+function finishRoll(){
+  rollMode=false; closeCard();
+  if(state.entry==="eval"){
+    const c={}; EVAL_LEVELS.forEach(l=>c[l]=0); let none=0;
+    rosterOf(state.classId).forEach(([id])=>{ const ev=evalOf(state.classId,id); if(ev) c[ev]++; else none++; });
+    toast(`評価 完了：A°${c["A°"]}・A${c.A}・B${c.B}・C°${c["C°"]}・C${c.C}・欠席${c["欠席"]}${none?`・未${none}`:""}`);
+  }else{
+    const c={present:0,absent:0,late:0,early:0,unknown:0};
+    rosterOf(state.classId).forEach(([id])=>c[statusOf(state.classId,id)]++);
+    toast(`出席確認 完了：出席${c.present}・欠席${c.absent}・遅刻${c.late}・早退${c.early}${c.unknown?`・未確認${c.unknown}`:""}`);
+  }
+}
+$("#cardClose").onclick=closeCard;
+$("#cardScrim").onclick=e=>{ if(e.target.id==="cardScrim" && !rollMode) closeCard(); };
+$("#cardFuri").onclick=()=>editFuri();
+$("#cardFuriEdit").onclick=()=>editFuri();
+$("#rollBack").onclick=rollBackStep;
+$("#rollSkip").onclick=rollSkipStep;
+function editFuri(){
+  if(!cardSid) return;
+  const v=prompt(`${nameOf(state.classId,cardSid)} のふりがな`, furiOf(cardSid));
+  if(v==null) return;
+  const t=v.trim();
+  setFuri(cardSid,t);
+  const fEl=$("#cardFuri");
+  fEl.textContent = t || "（ふりがな未設定）タップして編集";
+  fEl.classList.toggle("unset", !t);
+}
+
+$("#editToggle").onclick=()=>{
+  state.mode=state.mode==="edit"?"attendance":"edit";
+  state.sel=null; renderAll();
+};
+$("#rollBtn").onclick=startRoll;
+function setAll(st){
+  state.records[state.classId]=state.records[state.classId]||{};
+  if(st==="unknown"){ delete state.records[state.classId][state.date]; }
+  else { const day=state.records[state.classId][state.date]={}; rosterOf(state.classId).forEach(([id])=>day[id]=st); }
+  sSet(K_REC,JSON.stringify(state.records));
+  renderSummary(); renderRoom(); renderUnplaced();
+}
+$("#allPresent").onclick=()=>{ setAll("present"); toast(classLabel(state.classId)+" を全員出席にしました"); $("#settingsScrim").classList.remove("show"); };
+$("#allUnknown").onclick=()=>{ setAll("unknown"); toast(classLabel(state.classId)+" を全員未確認に戻しました"); $("#settingsScrim").classList.remove("show"); };
+
+/* ============ 座席の割り当て（名簿から選ぶ）============ */
+let pickerSeatIdx=null;
+function openSeatPicker(idx){
+  pickerSeatIdx=idx;
+  const seats=seatingFor(state.classId);
+  const sid=seats[idx];
+  $("#pickerTitle").textContent=`${seatLabel(idx)}の席`;
+  $("#pickerSub").textContent = sid
+    ? `現在：${attNoOf(sid)}番 ${nameOf(state.classId,sid)}（タップした生徒と入れ替わります）`
+    : "現在：空席（選んだ生徒をここに移します）";
+  $("#pickerSearch").value="";
+  renderPickerList("");
+  $("#pickerScrim").classList.add("show");
+  setTimeout(()=>$("#pickerSearch").focus(),60);
+}
+function renderPickerList(q){
+  const seats=seatingFor(state.classId);
+  const idxOf={}; seats.forEach((s,i)=>{ if(s) idxOf[s]=i; });
+  const target=pickerSeatIdx;
+  const list=$("#pickerList"); list.innerHTML="";
+  q=(q||"").trim();
+  rosterOf(state.classId).forEach(([id,name])=>{
+    const no=attNoOf(id);
+    if(q && !(no+" "+name).includes(q) && !name.includes(q)) return;
+    const ix=idxOf[id];
+    const loc = ix==null ? "未配置" : ix===target ? "この席" : seatLabel(ix);
+    const row=document.createElement("button");
+    row.className="prow"+(ix===target?" here":"")+(supportOf(id)?" support":"");
+    row.innerHTML=`<span class="pno">${no}</span><span class="pname">${name}</span><span class="ploc">${loc}</span>`;
+    row.onclick=()=>assignStudent(id);
+    list.appendChild(row);
+  });
+  if(!list.children.length) list.innerHTML='<div class="pempty">該当する生徒がいません</div>';
+}
+function assignStudent(id){
+  const seats=seatingFor(state.classId);
+  const S=pickerSeatIdx;
+  if(seats[S]===id){ closePicker(); return; }
+  const old=seats.indexOf(id);   // その生徒の今の席（なければ-1）
+  seats[S]=id;
+  if(old!==-1 && old!==S) seats[old]=null;   // 移動（交換しない：元の席は空席に）
+  sSet(K_SEAT,JSON.stringify(state.seating));
+  closePicker(); renderRoom(); renderSummary(); renderUnplaced();
+  toast(`${attNoOf(id)}番 ${nameOf(state.classId,id)} を ${seatLabel(S)} に配置`);
+}
+function clearSeat(){
+  const seats=seatingFor(state.classId);
+  seats[pickerSeatIdx]=null;
+  sSet(K_SEAT,JSON.stringify(state.seating));
+  closePicker(); renderRoom(); renderSummary();
+  toast("この席を空席にしました");
+}
+function closePicker(){ $("#pickerScrim").classList.remove("show"); }
+$("#pickerSearch").oninput=e=>renderPickerList(e.target.value);
+$("#pickerCancel").onclick=closePicker;
+$("#pickerScrim").onclick=e=>{ if(e.target.id==="pickerScrim") closePicker(); };
+
+/* ============ 記録・出力 ============ */
+function buildPayload(){
+  const seats=seatingFor(state.classId);
+  const idxOf={}; seats.forEach((sid,i)=>{ if(sid) idxOf[sid]=i; });
+  const records=rosterOf(state.classId).map(([id,name])=>{
+    const st=statusOf(state.classId,id);
+    const ix=idxOf[id];
+    const seatStr = ix==null ? "" : (isFifthIdx(ix) ? "5人目" : String(ix+1));
+    const cd=cardsOf(state.classId,id);
+    return { id, name, status:st, statusLabel:STATUS[st].label,
+             attNo: attNoOf(id),
+             eval: evalOf(state.classId,id),
+             cardY: cd.y, cardR: cd.r, cardG: cd.g,
+             group: ix!=null? groupOfIdx(ix) : "", seat: seatStr };
+  });
+  const c={present:0,absent:0,late:0,early:0,unknown:0};
+  records.forEach(r=>c[r.status]++);
+  return { className:classLabel(state.classId), classCode:state.classId,
+           date:state.date, title:titleOf(state.classId,state.date), recordedAt:new Date().toISOString(),
+           counts:c, records };
+}
+function toast(msg){
+  const t=$("#toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2200);
+}
+async function downloadCSV(){
+  const p=buildPayload();
+  let csv="\uFEFF日付,授業タイトル,クラス,班,席番号,出席番号,氏名,状態,評価,イエロー,レッド,グリーン\n";
+  p.records.forEach(r=>{ csv+=`${p.date},${p.title},${p.className},${r.group},${r.seat},${r.attNo},${r.name},${r.statusLabel},${r.eval},${r.cardY},${r.cardR},${r.cardG}\n`; });
+  const fname=`出席_${p.className}_${p.date}.csv`;
+  const blob=new Blob([csv],{type:"text/csv"});
+
+  // 1) PC(Chrome/Edge)：保存先を選ぶダイアログ
+  try{
+    if(window.showSaveFilePicker){
+      const h=await window.showSaveFilePicker({suggestedName:fname,
+        types:[{description:"CSV",accept:{"text/csv":[".csv"]}}]});
+      const w=await h.createWritable(); await w.write(blob); await w.close();
+      toast("CSVを保存しました"); return;
+    }
+  }catch(e){ if(e&&e.name==="AbortError") return; }
+
+  // 2) iPad/iPhone・Android：共有シート（「ファイルに保存」で場所を選べる）
+  try{
+    if(navigator.canShare){
+      const file=new File([blob],fname,{type:"text/csv"});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file], title:fname});
+        return;
+      }
+    }
+  }catch(e){ if(e&&e.name==="AbortError") return; }
+
+  // 3) 通常のダウンロード
+  try{
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob); a.download=fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast("CSVを保存しました（ダウンロード）"); return;
+  }catch(e){}
+
+  // 4) 最終手段：新しいタブで開く（共有/コピーで保存）
+  try{
+    window.open(URL.createObjectURL(blob),"_blank");
+    toast("CSVを新しいタブで開きました。共有から保存してください");
+  }catch(e){ toast("この環境では保存できません。Safariで開いてお試しください"); }
+}
+async function sendToSheet(){
+  const p=buildPayload();
+  if(!state.gasUrl){
+    toast("先にGAS URLを登録してください");
+    openSettings(); return;
+  }
+  $("#recordBtn").disabled=true; $("#recordBtn").textContent="記録中…";
+  try{
+    await fetch(state.gasUrl,{
+      method:"POST", mode:"no-cors",
+      headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify(p)
+    });
+    toast(`${p.className} の出欠を記録しました（欠${p.counts.absent}・遅${p.counts.late}・早${p.counts.early}${p.counts.unknown?`・未確認${p.counts.unknown}`:""}）`);
+  }catch(e){
+    toast("送信に失敗しました。URLとネット接続をご確認ください");
+  }finally{
+    $("#recordBtn").disabled=false; $("#recordBtn").textContent="記録する";
+  }
+}
+$("#recordBtn").onclick=sendToSheet;
+$("#csvBtn").onclick=openExport;
+function buildRows(){
+  const p=buildPayload();
+  const header=["日付","授業タイトル","クラス","班","席番号","出席番号","氏名","状態","評価","イエロー","レッド","グリーン"];
+  const rows=p.records.map(r=>[p.date,p.title,p.className,r.group,r.seat,r.attNo,r.name,r.statusLabel,r.eval,r.cardY,r.cardR,r.cardG]);
+  return {header, rows};
+}
+function openExport(){
+  const {header,rows}=buildRows();
+  const tsv=[header.join("\t")].concat(rows.map(r=>r.join("\t"))).join("\n");
+  $("#exportText").value=tsv;
+  $("#exportOk").textContent="";
+  $("#settingsScrim").classList.remove("show");
+  $("#exportScrim").classList.add("show");
+  setTimeout(()=>{ const t=$("#exportText"); t.focus(); t.setSelectionRange(0,t.value.length); },80);
+}
+function copyExport(){
+  const t=$("#exportText"); t.focus(); t.setSelectionRange(0,t.value.length);
+  let ok=false;
+  try{ ok=document.execCommand("copy"); }catch(e){}
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t.value)
+      .then(()=>$("#exportOk").textContent="コピーしました。スプレッドシートに貼り付けてください")
+      .catch(()=>$("#exportOk").textContent = ok ? "コピーしました。貼り付けてください" : "テキストを長押しで全選択→コピーしてください");
+  }else{
+    $("#exportOk").textContent = ok ? "コピーしました。スプレッドシートに貼り付けてください" : "テキストを長押しで全選択→コピーしてください";
+  }
+}
+$("#exportCopy").onclick=copyExport;
+$("#exportSave").onclick=downloadCSV;
+$("#exportClose").onclick=()=>$("#exportScrim").classList.remove("show");
+$("#exportScrim").onclick=e=>{ if(e.target.id==="exportScrim") e.currentTarget.classList.remove("show"); };
+
+/* ============ 設定シート ============ */
+function renderRosterList(){
+  const ids=classIds();
+  const box=$("#rosterList");
+  if(!ids.length){ box.textContent="（まだ読み込まれていません）"; return; }
+  box.innerHTML = "読み込み済み："+ids.map(id=>
+    `<span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:3px 4px 3px 10px;margin:2px 3px 0 0;">`+
+    `${classLabel(id)}（${rosterOf(id).length}人）`+
+    `<button data-del="${id}" style="border:none;background:#efeadd;border-radius:999px;width:20px;height:20px;font-size:12px;cursor:pointer;">×</button>`+
+    `</span>`
+  ).join("");
+  box.querySelectorAll("button[data-del]").forEach(b=>{
+    b.onclick=()=>{
+      const id=b.getAttribute("data-del");
+      if(!confirm(`${classLabel(id)}の名簿を削除しますか？（座席配置や記録は残ります）`)) return;
+      delete ROSTER[id];
+      sSet(K_ROSTER, JSON.stringify(ROSTER));
+      if(state.classId===id) state.classId=classIds()[0]||null;
+      renderRosterList(); renderAll();
+    };
+  });
+}
+function openSettings(){
+  $("#settingsOk").textContent="";
+  $("#gasInput").value=state.gasUrl;
+  $("#soundChk").checked=!state.muted;
+  $("#furiBulk").value="";
+  $("#rosterPaste").value=""; $("#rosterOk").textContent=""; $("#rosterFile").value="";
+  renderRosterList();
+  if(fetchBlockedHere()){
+    $("#rosterFetchBtn").disabled=true;
+    $("#rosterFetchedNote").textContent="このClaudeプレビュー内では外部通信ができないため、自動取得は使えません（ボタンは押せません）。GitHub Pagesに置くか、保存したHTMLをSafariで開くと使えます。下の「手動で読み込む」は今すぐ使えます。";
+  }else{
+    $("#rosterFetchBtn").disabled=false;
+    $("#rosterFetchedNote").textContent = state.rosterFetched
+      ? `最終取得：${fmtDate(state.rosterFetched).jp}（年度はじめに1回でOK。転入学があったときだけ更新してください）`
+      : "まだ取得していません。GAS URLを保存したら「スプレッドシートから名簿を取得／更新」を押してください。";
+  }
+  $("#titleInput").value = state.classId ? titleOf(state.classId, state.date) : "";
+  $("#gsizeSelect").value = state.groupSize[state.classId] || "";
+  $("#gsizeNote").textContent = state.classId
+    ? `現在：${classLabel(state.classId)}（${rosterOf(state.classId).length}人）は自動だと${groupSizeFor(state.classId)}人/班になります`
+    : "";
+  $("#storeNote").textContent = HAS_WS
+    ? "保存先：Claudeアプリ内（このプレビューでは外部サイトへの送信＝GAS記録はできません。GitHub Pages等に置くと記録できます）"
+    : "保存先：この端末のブラウザ（localStorage）。GAS記録も利用できます。";
+  renderDate();
+  $("#settingsScrim").classList.add("show");
+}
+$("#openSettings").onclick=openSettings;
+$("#emptyRosterBtn").onclick=openSettings;
+$("#titleInput").onchange=e=>{ if(state.classId) setTitle(state.classId, state.date, e.target.value.trim()); };
+
+/* ============ 全画面表示 ============ */
+function fsActive(){ return document.fullscreenElement || document.webkitFullscreenElement; }
+function toggleFull(){
+  const el=document.documentElement;
+  if(!fsActive()){
+    const req=el.requestFullscreen||el.webkitRequestFullscreen;
+    if(req){ try{ const p=req.call(el); if(p&&p.catch) p.catch(()=>toast("この画面では全画面にできません")); }catch(e){ toast("この画面では全画面にできません"); } }
+    else toast("この端末は全画面表示に未対応です");
+  }else{
+    const ex=document.exitFullscreen||document.webkitExitFullscreen;
+    if(ex){ try{ ex.call(document); }catch(e){} }
+  }
+}
+function updateFullIcon(){ const b=$("#fullBtn"); if(b) b.textContent=fsActive()?"⤡":"⛶"; }
+$("#fullBtn").onclick=toggleFull;
+document.addEventListener("fullscreenchange",updateFullIcon);
+document.addEventListener("webkitfullscreenchange",updateFullIcon);
+$("#settingsScrim").onclick=e=>{ if(e.target.id==="settingsScrim") e.currentTarget.classList.remove("show"); };
+$("#dateInput").onchange=e=>{
+  state.date=e.target.value||todayStr();
+  $("#titleInput").value = state.classId ? titleOf(state.classId, state.date) : "";
+  renderAll();
+};
+$("#saveSettings").onclick=()=>{
+  state.gasUrl=$("#gasInput").value.trim();
+  sSet(K_URL,state.gasUrl);
+  $("#settingsOk").textContent="保存しました";
+  setTimeout(()=>$("#settingsScrim").classList.remove("show"),600);
+};
+$("#soundChk").onchange=e=>{ state.muted=!e.target.checked; sSet(K_MUTE,state.muted?"1":"0"); if(!state.muted) playStatusSound("present"); };
+$("#gsizeSelect").onchange=e=>{
+  if(!state.classId) return;
+  const v=e.target.value;
+  if(v) state.groupSize[state.classId]=v; else delete state.groupSize[state.classId];
+  sSet(K_GSIZE, JSON.stringify(state.groupSize));
+  const newGs=groupSizeFor(state.classId);
+  $("#gsizeNote").textContent=`現在：${classLabel(state.classId)}（${rosterOf(state.classId).length}人）は自動だと${newGs}人/班になります`;
+  if(confirm(`${classLabel(state.classId)}の座席配置を、${newGs}人/班の初期配置にリセットしますか？（個別に動かした配置は失われます）`)){
+    delete state.seating[state.classId];
+    sSet(K_SEAT, JSON.stringify(state.seating));
+    renderAll();
+    toast(`${classLabel(state.classId)}を${newGs}人/班で再配置しました`);
+  }
+};
+$("#furiApply").onclick=()=>{
+  const lines=$("#furiBulk").value.split("\n");
+  let n=0;
+  lines.forEach(line=>{
+    const m=line.trim().match(/^(\d{1,2})[\s　]+(.+)$/);
+    if(!m) return;
+    const sid=state.classId+String(parseInt(m[1],10)).padStart(2,"0");
+    if(rosterOf(state.classId).some(r=>r[0]===sid)){ setFuri(sid, m[2].trim()); n++; }
+  });
+  $("#furiBulk").value="";
+  toast(`${classLabel(state.classId)}に${n}件のふりがなを登録しました`);
+};
+
+/* ============ 名簿の読み込み（添付ファイル／貼り付け）============ */
+function groupRosterRows(rows){
+  // rows: [[id,name,furi,support], ...]
+  const groups={}; let count=0;
+  rows.forEach(row=>{
+    const idRaw=String(row[0]||"").replace(/[^\d]/g,"");
+    if(!/^\d{4}$/.test(idRaw)) return;
+    const name=String(row[1]||"").trim();
+    if(!name) return;
+    const furi=String(row[2]||"").trim();
+    const support=String(row[3]||"").trim();
+    const classId=idRaw.slice(0,2);
+    groups[classId]=groups[classId]||[];
+    groups[classId].push([idRaw,name,furi,support]);
+    count++;
+  });
+  return {groups,count};
+}
+function parseRosterText(text){
+  const lines=String(text||"").split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+  const rows=lines.map(line=>{
+    let cols;
+    if(line.indexOf("\t")>=0) cols=line.split("\t");
+    else if(line.indexOf(",")>=0) cols=line.split(",");
+    else cols=line.split(/[\s　]{2,}/);
+    return cols.map(c=>c.trim().replace(/^"(.*)"$/,"$1"));
+  });
+  return groupRosterRows(rows);
+}
+function applyRosterGroups(groups,count){
+  if(!count) return {labels:[],count:0};
+  const labels=[];
+  Object.keys(groups).forEach(classId=>{
+    const oldIds=rosterOf(classId).map(r=>r[0]);
+    oldIds.forEach(id=>{ delete state.support[id]; });
+    const rows=groups[classId].slice().sort((a,b)=>attNoOf(a[0])-attNoOf(b[0]));
+    ROSTER[classId]=rows.map(r=>[r[0],r[1]]);
+    rows.forEach(r=>{
+      if(r[2]) setFuri(r[0],r[2]);
+      if(r[3]) state.support[r[0]]=true;
+    });
+    labels.push(classLabel(classId));
+  });
+  sSet(K_ROSTER, JSON.stringify(ROSTER));
+  sSet(K_SUPPORT, JSON.stringify(state.support));
+  if(!state.classId || !ROSTER[state.classId]){
+    const ids=classIds(); state.classId=ids[0]||null; state.grade=state.classId?state.classId[0]:null;
+  }
+  return {labels,count};
+}
+function applyRosterImport(text){
+  const {groups,count}=parseRosterText(text);
+  if(!count){
+    $("#rosterOk").textContent="読み取れる行が見つかりませんでした。「整理番号」「氏名」の列（4桁の整理番号）を確認してください。";
+    return;
+  }
+  const {labels}=applyRosterGroups(groups,count);
+  $("#rosterPaste").value=""; $("#rosterFile").value="";
+  renderRosterList();
+  $("#rosterOk").textContent=`${labels.join("・")} を読み込みました（合計${count}人）`;
+  renderAll();
+}
+function readFileSmart(file,cb){
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const buf=ev.target.result;
+    let text="";
+    try{ text=new TextDecoder("utf-8",{fatal:false}).decode(buf); }catch(e){}
+    if(text.indexOf("\uFFFD")>=0){
+      try{ text=new TextDecoder("shift_jis").decode(buf); }catch(e){}
+    }
+    cb(text);
+  };
+  reader.onerror=()=>{ $("#rosterOk").textContent="ファイルを読み込めませんでした。"; };
+  reader.readAsArrayBuffer(file);
+}
+$("#rosterApply").onclick=()=>{
+  const file=$("#rosterFile").files[0];
+  if(file) readFileSmart(file, applyRosterImport);
+  else applyRosterImport($("#rosterPaste").value);
+};
+/* ---- スプレッドシートのmeiboシートから自動取得（年度はじめ1回＋転入学時の手動更新）---- */
+function fetchBlockedHere(){ return HAS_WS; }   // Claudeのプレビュー内は外部通信不可
+async function fetchRosterFromSheet(manual){
+  if(!state.gasUrl){
+    if(manual){ $("#rosterOk").textContent="先にGAS ウェブアプリURLを登録してください（下の欄）。"; }
+    return false;
+  }
+  if(fetchBlockedHere()){
+    if(manual){ $("#rosterOk").textContent="このClaudeプレビュー内では外部通信ができないため取得できません。GitHub Pagesに置くか、保存したHTMLをSafariで開いてから押してください。"; }
+    return false;
+  }
+  if(manual){ $("#rosterOk").textContent="取得中…"; }
+  try{
+    const ctrl=(typeof AbortController!=="undefined") ? new AbortController() : null;
+    const timer=ctrl ? setTimeout(()=>ctrl.abort(),8000) : null;
+    const res=await fetch(state.gasUrl+(state.gasUrl.indexOf("?")>=0?"&":"?")+"action=roster", ctrl?{signal:ctrl.signal}:{});
+    if(timer) clearTimeout(timer);
+    const data=await res.json();
+    if(!data || !data.ok || !Array.isArray(data.rows)){
+      if(manual) $("#rosterOk").textContent="名簿シート（meibo）が見つからない、または形式が正しくありません。";
+      return false;
+    }
+    const {groups,count}=groupRosterRows(data.rows);
+    if(!count){
+      if(manual) $("#rosterOk").textContent="meiboシートに有効な行（4桁の整理番号）が見つかりませんでした。";
+      return false;
+    }
+    const {labels}=applyRosterGroups(groups,count);
+    const now=todayStr();
+    state.rosterFetched=now; sSet(K_ROSTER_FETCHED, now);
+    renderRosterList();
+    if(manual) $("#rosterOk").textContent=`スプレッドシートから取得しました：${labels.join("・")}（合計${count}人）`;
+    renderAll();
+    return true;
+  }catch(e){
+    if(manual){
+      $("#rosterOk").textContent = (e && e.name==="AbortError")
+        ? "応答がありませんでした（8秒でタイムアウト）。URLやデプロイ設定を確認してください。"
+        : "取得できませんでした（このプレビュー内では外部通信ができません。GitHub Pages等に置くか、Safariで開いて試してください）。";
+    }
+    return false;
+  }
+}
+$("#rosterFetchBtn").onclick=()=>fetchRosterFromSheet(true);
+
+const GAS_CODE = `function doGet(e){
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('meibo');
+  if(!sh){
+    return ContentService.createTextOutput(JSON.stringify({ok:false, error:'meiboシートが見つかりません'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  const data = sh.getDataRange().getValues();
+  const rows = [];
+  for(let i=1;i<data.length;i++){     // 1行目は見出し（整理番号,氏名,ふりがな,支援級）として読み飛ばす
+    const r = data[i];
+    const id = String(r[0]||'').trim();
+    if(!/^\\d{4}$/.test(id)) continue;
+    rows.push([id, String(r[1]||'').trim(), String(r[2]||'').trim(), String(r[3]||'').trim()]);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ok:true, rows:rows}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+function doPost(e){
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const d  = JSON.parse(e.postData.contents);
+  const sheetName = d.className || 'シート1';      // 例：1年2組
+  let sh = ss.getSheetByName(sheetName);
+  if(!sh){
+    sh = ss.insertSheet(sheetName);
+    sh.getRange(1,1,1,2).setValues([['整理番号','氏名']]);
+    const sorted = d.records.slice().sort(function(a,b){ return a.attNo - b.attNo; });
+    sorted.forEach(function(r){ sh.appendRow([r.id, r.name]); });
+  }
+  const lastCol = sh.getLastColumn();
+  const header = lastCol>0 ? sh.getRange(1,1,1,lastCol).getValues()[0] : [];
+  const label = d.title ? (d.date+' '+d.title) : d.date;   // 授業タイトルがあれば列名に含める
+  const wantCols = [label+' 出欠', label+' 評価', label+' カード'];
+  const colIdx = {};
+  wantCols.forEach(function(colTitle){
+    let idx = header.indexOf(colTitle);
+    if(idx===-1){
+      sh.getRange(1, sh.getLastColumn()+1).setValue(colTitle);
+      idx = sh.getLastColumn()-1;
+      header.push(colTitle);
+    }
+    colIdx[colTitle] = idx+1;   // 1始まりの列番号
+  });
+  const lastRow = sh.getLastRow();
+  const ids = lastRow>1 ? sh.getRange(2,1,lastRow-1,1).getValues().map(function(r){return String(r[0]);}) : [];
+  const rowOf = {};
+  ids.forEach(function(v,i){ rowOf[v]=i+2; });
+  d.records.forEach(function(r){
+    let row = rowOf[String(r.id)];
+    if(!row){
+      row = sh.getLastRow()+1;
+      sh.getRange(row,1,1,2).setValues([[r.id, r.name]]);
+      rowOf[String(r.id)] = row;
+    }
+    let cardMark = '🟥'.repeat(Math.min(r.cardR,3)) + '🟨'.repeat(Math.min(r.cardY,2)) + '🟩'.repeat(Math.min(r.cardG,3));
+    sh.getRange(row, colIdx[wantCols[0]]).setValue(r.statusLabel);
+    sh.getRange(row, colIdx[wantCols[1]]).setValue(r.eval);
+    sh.getRange(row, colIdx[wantCols[2]]).setValue(cardMark);
+  });
+  return ContentService.createTextOutput(JSON.stringify({ok:true}))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+$("#gasCode").textContent=GAS_CODE;
+
+/* ============ 初期化 ============ */
+(function init(){
+  try{ renderAll(); }catch(e){ console.error(e); }   // まず必ず描画（保存読込に依存しない）
+  loadSaved();                                        // 保存はバックグラウンドで読み込み→再描画
+})();
+async function loadSaved(){
+  try{
+    const ro  =await sGet(K_ROSTER); if(ro){ try{ ROSTER=JSON.parse(ro); }catch(e){} }
+    if(!state.classId){ const ids=classIds(); state.classId=ids[0]||null; state.grade=state.classId?state.classId[0]:null; }
+    const seat=await sGet(K_SEAT); if(seat){ try{ state.seating=JSON.parse(seat); }catch(e){} }
+    const url =await sGet(K_URL);  if(url) state.gasUrl=url;
+    const rec =await sGet(K_REC);  if(rec){ try{ state.records=JSON.parse(rec); }catch(e){} }
+    const fu  =await sGet(K_FURI); if(fu){ try{ state.furigana=JSON.parse(fu); }catch(e){} }
+    const ev  =await sGet(K_EVAL); if(ev){ try{ state.evals=JSON.parse(ev); }catch(e){} }
+    const cd  =await sGet(K_CARDS); if(cd){ try{ state.cards=JSON.parse(cd); }catch(e){} }
+    const sup =await sGet(K_SUPPORT); if(sup){ try{ state.support=JSON.parse(sup); }catch(e){} }
+    const gsz =await sGet(K_GSIZE); if(gsz){ try{ state.groupSize=JSON.parse(gsz); }catch(e){} }
+    const ti  =await sGet(K_TITLE); if(ti){ try{ state.titles=JSON.parse(ti); }catch(e){} }
+    const rf  =await sGet(K_ROSTER_FETCHED); if(rf) state.rosterFetched=rf;
+    const mu  =await sGet(K_MUTE); if(mu==="1") state.muted=true;
+  }catch(e){ console.error(e); }
+  try{ renderAll(); }catch(e){ console.error(e); }
+  // 名簿が未取得で、GAS URLが登録済みなら、年度はじめの自動取得を1回だけ試みる
+  if(classIds().length===0 && state.gasUrl && !state.rosterFetched){
+    try{ await fetchRosterFromSheet(false); }catch(e){ console.error(e); }
+  }
+}
+</script>
+</body>
+</html>
