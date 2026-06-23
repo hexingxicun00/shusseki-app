@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 4.0  (2026-06-21)
+     version 4.1  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -39,6 +39,7 @@
        3.8 GASコードを強化：整理番号の列を常にテキスト形式に固定し、比較もtrimして一致させることで、数値化による不一致で別行に追加されてしまう不具合を防止（既存の生徒は同じ行に列が増える形を維持）
        3.9 GASコードの絵文字（🟥🟨🟩）をString.fromCodePoint方式に変更（iPadでコピペすると文字が壊れて構文エラーになる問題を回避）
        4.0 同じクラス・日付（・タイトル）で2回目の記録をする前に確認ダイアログを表示（誤って空欄で上書きするのを防止）。座席の名前を「名字のみ」表示にして文字を拡大（同じ苗字が同クラスにいる場合は名の1文字目まで表示）。座席タイルを少し大きく。レイアウトを並べ替え、座席表を上部に大きく、出欠/評価/カードの切替や集計は下部（操作ボタンの近く）に移動
+       4.1 ローマ字（アルファベット）表記の生徒は最後の単語を表示名に変更（例：DAO DUC DUY→DUY）。同じ表示名が重複する場合は他の単語の頭文字を付けて区別
      ============================================================ -->
 <style>
   :root{
@@ -370,7 +371,7 @@
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="appver">技術室 出席確認　v4.0（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.1（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -517,10 +518,21 @@ const STATUS = {
 const SUMMARY_ORDER=["present","absent","late","early","unknown"];
 function classLabel(id){ return id[0]+"年"+id[1]+"組"; }
 function nameOf(classId,sid){ const e=rosterOf(classId).find(r=>r[0]===sid); return e?e[1]:""; }
+function isRomajiName(name){
+  const t=String(name||"").trim();
+  return t.length>0 && /^[A-Za-zÀ-ÖØ-öø-ÿ'\-.\s]+$/.test(t);
+}
 function nameParts(name){
-  const m=String(name||"").trim().split(/[\s　]+/).filter(Boolean);
-  if(m.length>=2) return {sei:m[0], mei:m.slice(1).join("")};
-  return {sei:String(name||"").trim(), mei:""};
+  const t=String(name||"").trim();
+  const m=t.split(/[\s　]+/).filter(Boolean);
+  if(m.length>=2){
+    if(isRomajiName(t)){
+      // ローマ字（外国籍）表記：最後の単語を表示名にする（例：DAO DUC DUY → DUY）
+      return {sei:m[m.length-1], mei:m.slice(0,-1).join("")};
+    }
+    return {sei:m[0], mei:m.slice(1).join("")};
+  }
+  return {sei:t, mei:""};
 }
 function seatNameOf(classId,sid){
   const full=nameOf(classId,sid);
