@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 3.9  (2026-06-21)
+     version 4.0  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -37,7 +37,8 @@
        3.6 出欠入力の「出席」ボタンを右側（右利き向け）に配置変更
        3.7 出欠ボタンを「出席」右上・「欠席」右下に再配置（遅刻/早退は左側）。ふりがなの文字サイズを拡大。カード入力画面（大きい画面）の氏名にも支援級の小さな目印を追加
        3.8 GASコードを強化：整理番号の列を常にテキスト形式に固定し、比較もtrimして一致させることで、数値化による不一致で別行に追加されてしまう不具合を防止（既存の生徒は同じ行に列が増える形を維持）
-       3.9 GASコードの絵文字（🟥🟨🟩）をString.fromCodePoint方式に変更（iPadでコピペすると文字が壊れて構文エラーになる問題を回避）（背景タップで終了しない／カード高さ固定／連打防止）
+       3.9 GASコードの絵文字（🟥🟨🟩）をString.fromCodePoint方式に変更（iPadでコピペすると文字が壊れて構文エラーになる問題を回避）
+       4.0 同じクラス・日付（・タイトル）で2回目の記録をする前に確認ダイアログを表示（誤って空欄で上書きするのを防止）。座席の名前を「名字のみ」表示にして文字を拡大（同じ苗字が同クラスにいる場合は名の1文字目まで表示）。座席タイルを少し大きく。レイアウトを並べ替え、座席表を上部に大きく、出欠/評価/カードの切替や集計は下部（操作ボタンの近く）に移動
      ============================================================ -->
 <style>
   :root{
@@ -161,21 +162,21 @@
   .seats{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:7px;position:relative;}
   .seat{
     background:#fff;border:1.5px solid var(--line);border-radius:8px;
-    height:56px;padding:4px 3px;display:flex;flex-direction:column;justify-content:center;
-    align-items:center;gap:1px;cursor:pointer;text-align:center;position:relative;overflow:hidden;
+    height:62px;padding:4px 3px;display:flex;flex-direction:column;justify-content:center;
+    align-items:center;gap:2px;cursor:pointer;text-align:center;position:relative;overflow:hidden;
     transition:transform .06s ease;
   }
-  .seat.fifth{flex-direction:row;justify-content:center;gap:7px;height:30px;width:100%;margin-bottom:3px;}
-  .seat.fifth .num{font-size:11px;}
-  .seat.fifth .nm{display:block;-webkit-line-clamp:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62%;font-size:13px;}
-  .seat.fifth .st{font-size:9px;}
-  .seat.fifth.empty .nm{font-size:11px;}
+  .seat.fifth{flex-direction:row;justify-content:center;gap:8px;height:36px;width:100%;margin-bottom:3px;}
+  .seat.fifth .num{font-size:12px;}
+  .seat.fifth .nm{display:block;-webkit-line-clamp:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62%;font-size:17px;}
+  .seat.fifth .st{font-size:10px;}
+  .seat.fifth.empty .nm{font-size:12px;}
   .seat:active{transform:scale(.97);}
-  .seat .num{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--ink-soft);}
+  .seat .num{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--ink-soft);}
   .seat .num.ghost{opacity:.45;}
-  .seat .nm{font-size:12px;font-weight:700;line-height:1.12;color:var(--ink);
-    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}
-  .seat .st{font-size:9px;font-weight:800;padding:0 5px;border-radius:6px;}
+  .seat .nm{font-size:18px;font-weight:800;line-height:1.15;color:var(--ink);
+    width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  .seat .st{font-size:10px;font-weight:800;padding:0 5px;border-radius:6px;}
   .seat.present{border-color:var(--present);}
   .seat.present .st{background:var(--present-bg);color:var(--present);}
   .seat.absent{border-color:var(--absent);background:var(--absent-bg);}
@@ -354,22 +355,22 @@
 </header>
 
 <main class="wrap">
+  <div class="empty-roster" id="emptyRoster" style="display:none;">
+    名簿がまだ読み込まれていません。<br>⚙設定の「名簿の読み込み」から、クラスの名簿（整理番号・氏名）を貼り付けるかファイルを選んで読み込んでください。
+    <br><button class="btn dark" id="emptyRosterBtn">名簿を読み込む</button>
+  </div>
+  <div class="rotate-hint">横向き（landscape）にすると全体が見やすくなります</div>
+  <div class="room-scroll"><div class="room" id="room"></div></div>
+  <div class="board">黒板・教室前方（手前）</div>
+  <div class="unplaced" id="unplaced"></div>
+  <div class="edit-note" id="editNote">配置変更モード：座っている席をタップすると削除（空席化）、空席をタップすると名簿から割り当てできます。配置はクラスごとに自動保存されます。</div>
   <div class="modeseg">
     <button id="segAtt" class="seg on">出欠</button>
     <button id="segEval" class="seg">評価</button>
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="empty-roster" id="emptyRoster" style="display:none;">
-    名簿がまだ読み込まれていません。<br>⚙設定の「名簿の読み込み」から、クラスの名簿（整理番号・氏名）を貼り付けるかファイルを選んで読み込んでください。
-    <br><button class="btn dark" id="emptyRosterBtn">名簿を読み込む</button>
-  </div>
-  <div class="unplaced" id="unplaced"></div>
-  <div class="edit-note" id="editNote">配置変更モード：座っている席をタップすると削除（空席化）、空席をタップすると名簿から割り当てできます。配置はクラスごとに自動保存されます。</div>
-  <div class="rotate-hint">横向き（landscape）にすると全体が見やすくなります</div>
-  <div class="room-scroll"><div class="room" id="room"></div></div>
-  <div class="board">黒板・教室前方（手前）</div>
-  <div class="appver">技術室 出席確認　v3.9（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.0（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -516,6 +517,20 @@ const STATUS = {
 const SUMMARY_ORDER=["present","absent","late","early","unknown"];
 function classLabel(id){ return id[0]+"年"+id[1]+"組"; }
 function nameOf(classId,sid){ const e=rosterOf(classId).find(r=>r[0]===sid); return e?e[1]:""; }
+function nameParts(name){
+  const m=String(name||"").trim().split(/[\s　]+/).filter(Boolean);
+  if(m.length>=2) return {sei:m[0], mei:m.slice(1).join("")};
+  return {sei:String(name||"").trim(), mei:""};
+}
+function seatNameOf(classId,sid){
+  const full=nameOf(classId,sid);
+  const {sei,mei}=nameParts(full);
+  if(!sei) return full;
+  const dupCount=rosterOf(classId).reduce((n,r)=>{
+    return n + (nameParts(r[1]).sei===sei ? 1 : 0);
+  },0);
+  return (dupCount>1 && mei) ? sei+mei.charAt(0) : sei;
+}
 function attNoOf(sid){ return parseInt(sid.slice(2),10); }        // 出席番号
 // 各班の「5人目の席」index：8班＝32(出席番号33番)、1〜7班＝33〜39（既定は空席）
 function fifthIdx(g){ return g===8 ? 32 : 32+g; }
@@ -533,7 +548,7 @@ const EVAL_LEVELS=["A°","A","B","C°","C","欠席"];
 function evalKey(v){ return ({"A°":"a0","A":"a","B":"b","C°":"c0","C":"c","欠席":"abs"})[v]||"none"; }
 
 /* ============ 保存（Claude内=window.storage / 外部公開=localStorage）============ */
-const K_SEAT="att.seating.v3", K_URL="att.gasurl.v1", K_REC="att.records.v1", K_FURI="att.furigana.v1", K_MUTE="att.mute.v1", K_EVAL="att.evals.v1", K_CARDS="att.cards.v1", K_ROSTER="att.roster.v1", K_SUPPORT="att.support.v1", K_GSIZE="att.groupsize.v1", K_ROSTER_FETCHED="att.rosterfetched.v1", K_TITLE="att.titles.v1";
+const K_SEAT="att.seating.v3", K_URL="att.gasurl.v1", K_REC="att.records.v1", K_FURI="att.furigana.v1", K_MUTE="att.mute.v1", K_EVAL="att.evals.v1", K_CARDS="att.cards.v1", K_ROSTER="att.roster.v1", K_SUPPORT="att.support.v1", K_GSIZE="att.groupsize.v1", K_ROSTER_FETCHED="att.rosterfetched.v1", K_TITLE="att.titles.v1", K_RECORDED="att.recordedkeys.v1";
 const HAS_WS = !!(typeof window!=="undefined" && window.storage);
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
@@ -567,6 +582,7 @@ const state = {
   groupSize:{},          // classId -> "4"|"5"（空=自動）
   rosterFetched:"",      // 名簿を最後にスプレッドシートから取得した日付
   titles:{},             // classId -> { date -> 授業タイトル }
+  recordedKeys:{},       // "classId|date|title" -> 最後に記録した時刻(ISO)。2回目の記録時に確認を出すため
   pending:null,          // 配置待ちの生徒sid（未配置をタップ→席をタップで配置）
   sel:null               // edit時の選択座席index
 };
@@ -738,7 +754,7 @@ function seatCell(seats,idx,opts){
       mark = STATUS[st].mark||STATUS[st].label;
     }
     seat.className=cls+" "+scls+(supportOf(sid)?" support":"");
-    seat.innerHTML=`<span class="num">${attNoOf(sid)}番</span><span class="nm">${nameOf(state.classId,sid)}</span><span class="st">${mark}</span>`;
+    seat.innerHTML=`<span class="num">${attNoOf(sid)}番</span><span class="nm">${seatNameOf(state.classId,sid)}</span><span class="st">${mark}</span>`;
   }else{
     seat.className=cls+" empty"+(state.mode==="edit"?" editable":"");
     const ghost = fifth ? "5人目" : (idx+1)+"番";
@@ -1183,6 +1199,14 @@ async function sendToSheet(){
     toast("先にGAS URLを登録してください");
     openSettings(); return;
   }
+  const key=`${p.classCode}|${p.date}|${p.title||""}`;
+  const prev=state.recordedKeys[key];
+  if(prev){
+    const t=new Date(prev);
+    const hhmm=`${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}`;
+    const ok=confirm(`${p.className}・${p.date}${p.title?"・"+p.title:""} は今日 ${hhmm} に記録済みです。\n今の内容で上書きしますか？\n（空欄や未確認のまま記録すると、前の記録が消えてしまいます）`);
+    if(!ok) return;
+  }
   $("#recordBtn").disabled=true; $("#recordBtn").textContent="記録中…";
   try{
     await fetch(state.gasUrl,{
@@ -1190,6 +1214,8 @@ async function sendToSheet(){
       headers:{"Content-Type":"text/plain;charset=utf-8"},
       body:JSON.stringify(p)
     });
+    state.recordedKeys[key]=new Date().toISOString();
+    sSet(K_RECORDED, JSON.stringify(state.recordedKeys));
     toast(`${p.className} の出欠を記録しました（欠${p.counts.absent}・遅${p.counts.late}・早${p.counts.early}${p.counts.unknown?`・未確認${p.counts.unknown}`:""}）`);
   }catch(e){
     toast("送信に失敗しました。URLとネット接続をご確認ください");
@@ -1563,6 +1589,7 @@ async function loadSaved(){
     const sup =await sGet(K_SUPPORT); if(sup){ try{ state.support=JSON.parse(sup); }catch(e){} }
     const gsz =await sGet(K_GSIZE); if(gsz){ try{ state.groupSize=JSON.parse(gsz); }catch(e){} }
     const ti  =await sGet(K_TITLE); if(ti){ try{ state.titles=JSON.parse(ti); }catch(e){} }
+    const rk  =await sGet(K_RECORDED); if(rk){ try{ state.recordedKeys=JSON.parse(rk); }catch(e){} }
     const rf  =await sGet(K_ROSTER_FETCHED); if(rf) state.rosterFetched=rf;
     const mu  =await sGet(K_MUTE); if(mu==="1") state.muted=true;
   }catch(e){ console.error(e); }
