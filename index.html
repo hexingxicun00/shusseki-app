@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 4.3  (2026-06-21)
+     version 4.6  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -42,6 +42,9 @@
        4.1 ローマ字（アルファベット）表記の生徒は最後の単語を表示名に変更（例：DAO DUC DUY→DUY）。同じ表示名が重複する場合は他の単語の頭文字を付けて区別
        4.2 座席表に「前回（直前の記録日）が欠席・遅刻・早退だった生徒」を左下の色付き三角でさりげなく表示（この端末で記録した出欠の履歴を使用）。出欠の選択肢に「みなし出席」を追加
        4.3 「みなし出席」を「みなみ」に変更（支援学級＝みなみ学級にいて技術の授業に来ていない生徒用。記録上は「-」として保存され、欠席としては数えない）。前回欠席の生徒には📄アイコンも追加し、配布物の見落としを防止しやすく
+       4.4 支援級（みなみ学級）の生徒が「欠席」になっている場合、座席表示・集計・記録すべてで自動的に「みなみ（-）」として扱うように変更（うっかり欠席を押しても大丈夫）。GAS記録時にスプレッドシートのセルへ欠席/早退/遅刻/-の色分け（背景色）を追加
+       4.5 4.4の自動変換（支援級フラグ→欠席を自動でみなみ扱いに）を撤回。みなみ学級の生徒でも技術の授業に参加している場合は通常通り「欠席」と表示・記録されるよう修正（「みなみ」は押したときだけ適用される独立した選択肢に戻した）
+       4.6 GASに一回限りの一括処理「colorizeAllSheets」を追加。スプレッドシートの既存データ（これまで記録した分）にも、欠席/早退/遅刻/-の色を後からまとめて適用できるようにした
      ============================================================ -->
 <style>
   :root{
@@ -395,7 +398,7 @@
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="appver">技術室 出席確認　v4.3（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.6（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -467,6 +470,7 @@
     <details>
       <summary>スプレッドシート側のコード（初回のみ設定）</summary>
       <p style="margin-top:10px">記録先のスプレッドシートで「拡張機能 ▸ Apps Script」を開き、下を貼り付けて「デプロイ ▸ 新しいデプロイ ▸ ウェブアプリ（アクセス：全員）」。発行されたURLを上のGAS欄に登録してください。「meibo」シートから名簿を自動取得できるようになり、クラスごとに自動でシートができ、1行＝1生徒（整理番号・氏名）になります。記録するたびに、その日（＋授業タイトル）の「出欠」「評価」「カード」の3列が右側に追加されていきます。</p>
+      <p style="margin-top:6px"><b>既存のデータにも色を付けたい場合</b>：Apps Scriptエディタ上部の関数選択（プルダウン）で「colorizeAllSheets」を選び、「実行」ボタンを押してください（一度だけでOKです）。すべてのクラスシートの既存データに、欠席/早退/遅刻/-の色がまとめて付きます。</p>
       <pre id="gasCode"></pre>
     </details>
   </div>
@@ -1610,12 +1614,34 @@ function doPost(e){
     }
     const RED = String.fromCodePoint(0x1F7E5), YEL = String.fromCodePoint(0x1F7E8), GRN = String.fromCodePoint(0x1F7E9);
     let cardMark = RED.repeat(Math.min(r.cardR,3)) + YEL.repeat(Math.min(r.cardY,2)) + GRN.repeat(Math.min(r.cardG,3));
-    sh.getRange(row, colIdx[wantCols[0]]).setValue(r.statusLabel);
+    const ATT_BG = {'欠席':'#f7e1da','早退':'#dfe9f4','遅刻':'#f8ecd2','-':'#e8e9eb'};
+    const attCell = sh.getRange(row, colIdx[wantCols[0]]);
+    attCell.setValue(r.statusLabel);
+    attCell.setBackground(ATT_BG[r.statusLabel] || null);   // 出席・未確認は色なし（白）に戻す
     sh.getRange(row, colIdx[wantCols[1]]).setValue(r.eval);
     sh.getRange(row, colIdx[wantCols[2]]).setValue(cardMark);
   });
   return ContentService.createTextOutput(JSON.stringify({ok:true}))
     .setMimeType(ContentService.MimeType.JSON);
+}
+function colorizeAllSheets(){
+  // 既存のデータにも色を付けるための一回限りの処理。
+  // Apps Scriptエディタ上部の関数選択で「colorizeAllSheets」を選んで「実行」ボタンを押してください。
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ATT_BG = {'欠席':'#f7e1da','早退':'#dfe9f4','遅刻':'#f8ecd2','-':'#e8e9eb'};
+  ss.getSheets().forEach(function(sh){
+    const lastCol = sh.getLastColumn();
+    const lastRow = sh.getLastRow();
+    if(lastCol<3 || lastRow<2) return;   // 出欠列がまだ無いシートはスキップ
+    const header = sh.getRange(1,1,1,lastCol).getValues()[0];
+    header.forEach(function(title,i){
+      if(typeof title!=='string' || title.slice(-3)!==' 出欠') return;   // 「○○ 出欠」列だけ対象
+      const range = sh.getRange(2, i+1, lastRow-1, 1);
+      const values = range.getValues();
+      const bgs = values.map(function(row){ return [ATT_BG[String(row[0]||'').trim()] || null]; });
+      range.setBackgrounds(bgs);
+    });
+  });
 }`;
 $("#gasCode").textContent=GAS_CODE;
 
