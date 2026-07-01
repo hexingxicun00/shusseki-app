@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 4.7  (2026-06-21)
+     version 4.8  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -46,6 +46,7 @@
        4.5 4.4の自動変換（支援級フラグ→欠席を自動でみなみ扱いに）を撤回。みなみ学級の生徒でも技術の授業に参加している場合は通常通り「欠席」と表示・記録されるよう修正（「みなみ」は押したときだけ適用される独立した選択肢に戻した）
        4.6 GASに一回限りの一括処理「colorizeAllSheets」を追加。スプレッドシートの既存データ（これまで記録した分）にも、欠席/早退/遅刻/-の色を後からまとめて適用できるようにした
        4.7 効果音の不具合修正（MacBook/SafariでAudioContextのresume完了を待たずに音を鳴らそうとして無音になっていた。pointerdownでも事前にunlockするよう改善）
+       4.8 赤いマークの誤表示を修正（クラスの30%以上が記録された日のみ「前回の授業」と判定。テスト時に数人タップしただけのデータで赤い三角が出てしまうのを防止）。GASにSpreadsheetApp.flush()を追加し、記録後に色が付かない問題を修正
      ============================================================ -->
 <style>
   :root{
@@ -399,7 +400,7 @@
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="appver">技術室 出席確認　v4.7（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.8（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -711,9 +712,15 @@ function setStatus(classId,sid,st){
 }
 function prevConcernStatus(classId,sid){
   // 前回（今日より前）の出欠で、欠席／遅刻／早退だった生徒を座席表で分かるようにする
+  // ※クラス人数の30%以上が記録されている日のみ「前回の授業」とみなす（テスト時の数件タップを除外）
   const recs=state.records[classId];
   if(!recs) return null;
-  const dates=Object.keys(recs).filter(d=>d<state.date && recs[d] && Object.keys(recs[d]).length).sort();
+  const threshold=Math.max(3, Math.floor(rosterOf(classId).length * 0.3));
+  const dates=Object.keys(recs).filter(d=>{
+    if(d>=state.date) return false;
+    const dayRec=recs[d];
+    return dayRec && Object.keys(dayRec).length>=threshold;
+  }).sort();
   if(!dates.length) return null;
   const st=recs[dates[dates.length-1]][sid];
   return (st==="absent"||st==="late"||st==="early") ? st : null;
@@ -1631,6 +1638,7 @@ function doPost(e){
     sh.getRange(row, colIdx[wantCols[1]]).setValue(r.eval);
     sh.getRange(row, colIdx[wantCols[2]]).setValue(cardMark);
   });
+  SpreadsheetApp.flush();   // 色付けを含むすべての変更を確定させる
   return ContentService.createTextOutput(JSON.stringify({ok:true}))
     .setMimeType(ContentService.MimeType.JSON);
 }
