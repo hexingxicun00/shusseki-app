@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 4.6  (2026-06-21)
+     version 4.7  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -45,6 +45,7 @@
        4.4 支援級（みなみ学級）の生徒が「欠席」になっている場合、座席表示・集計・記録すべてで自動的に「みなみ（-）」として扱うように変更（うっかり欠席を押しても大丈夫）。GAS記録時にスプレッドシートのセルへ欠席/早退/遅刻/-の色分け（背景色）を追加
        4.5 4.4の自動変換（支援級フラグ→欠席を自動でみなみ扱いに）を撤回。みなみ学級の生徒でも技術の授業に参加している場合は通常通り「欠席」と表示・記録されるよう修正（「みなみ」は押したときだけ適用される独立した選択肢に戻した）
        4.6 GASに一回限りの一括処理「colorizeAllSheets」を追加。スプレッドシートの既存データ（これまで記録した分）にも、欠席/早退/遅刻/-の色を後からまとめて適用できるようにした
+       4.7 効果音の不具合修正（MacBook/SafariでAudioContextのresume完了を待たずに音を鳴らそうとして無音になっていた。pointerdownでも事前にunlockするよう改善）
      ============================================================ -->
 <style>
   :root{
@@ -398,7 +399,7 @@
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="appver">技術室 出席確認　v4.6（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.7（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -922,19 +923,27 @@ function onSeat(idx){
 let actx=null;
 function audio(){
   if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
-  if(actx.state==="suspended") actx.resume();
   return actx;
 }
+function ensureAudio(){
+  const ac=audio(); if(!ac) return Promise.resolve(null);
+  if(ac.state==="suspended") return ac.resume().then(()=>ac);
+  return Promise.resolve(ac);
+}
+// ユーザー操作のたびにAudioContextを確実に起動しておく（MacBook/Safari対策）
+document.addEventListener("pointerdown",()=>{ const ac=audio(); if(ac&&ac.state==="suspended") ac.resume(); },{passive:true});
 function beep(freq,start,dur,vol,type){
-  const ac=audio(); if(!ac) return;
-  const t0=ac.currentTime+start;
-  const o=ac.createOscillator(), g=ac.createGain();
-  o.type=type||"sine"; o.frequency.value=freq;
-  g.gain.setValueAtTime(0,t0);
-  g.gain.linearRampToValueAtTime(vol,t0+0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
-  o.connect(g).connect(ac.destination);
-  o.start(t0); o.stop(t0+dur+0.03);
+  ensureAudio().then(ac=>{
+    if(!ac) return;
+    const t0=ac.currentTime+start;
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.type=type||"sine"; o.frequency.value=freq;
+    g.gain.setValueAtTime(0,t0);
+    g.gain.linearRampToValueAtTime(vol,t0+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    o.connect(g).connect(ac.destination);
+    o.start(t0); o.stop(t0+dur+0.03);
+  });
 }
 function playStatusSound(st){
   if(state.muted) return;
@@ -942,6 +951,7 @@ function playStatusSound(st){
   else if(st==="late"){ beep(620,0,.1,.22); beep(620,.12,.13,.22); }     // 同音2回
   else if(st==="early"){ beep(760,0,.11,.22); beep(520,.1,.16,.22); }    // 下降2音
   else if(st==="absent"){ beep(392,0,.22,.2,"triangle"); }               // 低めの1音
+  else if(st==="minami"){ beep(520,0,.1,.18); }                          // 短く1音
 }
 function playEvalSound(v){
   if(state.muted) return;
