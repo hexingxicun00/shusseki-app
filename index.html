@@ -6,7 +6,7 @@
 <title>技術室 出席確認</title>
 <!-- ============================================================
      技術室 出席確認アプリ
-     version 4.8  (2026-06-21)
+     version 4.9  (2026-06-21)
      変更履歴:
        1.0 初版（座席表＋出欠＋スプレッドシート/CSV出力）
        1.1 黒板を手前に（先生視点の配置）
@@ -47,6 +47,7 @@
        4.6 GASに一回限りの一括処理「colorizeAllSheets」を追加。スプレッドシートの既存データ（これまで記録した分）にも、欠席/早退/遅刻/-の色を後からまとめて適用できるようにした
        4.7 効果音の不具合修正（MacBook/SafariでAudioContextのresume完了を待たずに音を鳴らそうとして無音になっていた。pointerdownでも事前にunlockするよう改善）
        4.8 赤いマークの誤表示を修正（クラスの30%以上が記録された日のみ「前回の授業」と判定。テスト時に数人タップしただけのデータで赤い三角が出てしまうのを防止）。GASにSpreadsheetApp.flush()を追加し、記録後に色が付かない問題を修正
+       4.9 前回欠席/遅刻/早退の表示を改善。小さな三角から🙋（欠席）⏰（遅刻）🏃（早退）の絵文字バッジに変更し、直感的に分かりやすく
      ============================================================ -->
 <style>
   :root{
@@ -219,18 +220,12 @@
     background:#9fb6cf;opacity:.85;
   }
   .seat.fifth.support::after{top:50%;right:6px;transform:translateY(-50%);}
-  .seat.prev-absent::before,.seat.prev-late::before,.seat.prev-early::before{
-    content:"";position:absolute;bottom:0;left:0;width:0;height:0;border-style:solid;
-    border-width:0 0 14px 14px;opacity:.9;
+  .seat.prev-absent::before,.seat.prev-late::before,.seat.prev-early::before{content:none;}
+  .prev-badge{
+    position:absolute;top:2px;right:3px;font-size:16px;line-height:1;
+    pointer-events:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.15));
   }
-  .seat.prev-absent::before{border-color:transparent transparent var(--absent) transparent;}
-  .seat.prev-late::before{border-color:transparent transparent var(--late) transparent;}
-  .seat.prev-early::before{border-color:transparent transparent var(--early) transparent;}
-  .seat.fifth.prev-absent::before,.seat.fifth.prev-late::before,.seat.fifth.prev-early::before{
-    border-width:0 0 11px 11px;
-  }
-  .handout-badge{position:absolute;top:1px;left:3px;font-size:14px;line-height:1;pointer-events:none;}
-  .seat.fifth .handout-badge{position:absolute;top:50%;left:6px;transform:translateY(-50%);font-size:13px;}
+  .seat.fifth .prev-badge{top:50%;right:4px;transform:translateY(-50%);font-size:14px;}
   .uchip.support, .prow.support{box-shadow:inset 2px 0 0 #9fb6cf;}
   .rotate-hint{display:none;font-size:11px;color:var(--ink-soft);text-align:center;margin:4px 0 0;}
   @media (max-width:620px){.rotate-hint{display:block;}}
@@ -391,7 +386,7 @@
   <div class="rotate-hint">横向き（landscape）にすると全体が見やすくなります</div>
   <div class="room-scroll"><div class="room" id="room"></div></div>
   <div class="board">黒板・教室前方（手前）</div>
-  <div class="legend-hint">左下の色付き三角：前回 欠席・遅刻・早退　／　📄：前回欠席（配布物を確認）</div>
+  <div class="legend-hint">右上の絵文字：前回 🙋欠席（配布物を確認）　⏰遅刻　🏃早退</div>
   <div class="unplaced" id="unplaced"></div>
   <div class="edit-note" id="editNote">配置変更モード：座っている席をタップすると削除（空席化）、空席をタップすると名簿から割り当てできます。配置はクラスごとに自動保存されます。</div>
   <div class="modeseg">
@@ -400,7 +395,7 @@
     <button id="segCard" class="seg">カード</button>
   </div>
   <div class="summary" id="summary"></div>
-  <div class="appver">技術室 出席確認　v4.8（2026-06-21）</div>
+  <div class="appver">技術室 出席確認　v4.9（2026-06-21）</div>
 </main>
 
 <div class="bar">
@@ -813,8 +808,9 @@ function seatCell(seats,idx,opts){
     }
     const prevSt=prevConcernStatus(state.classId,sid);
     seat.className=cls+" "+scls+(supportOf(sid)?" support":"")+(prevSt?" prev-"+prevSt:"");
-    const handoutBadge = (prevSt==="absent") ? `<span class="handout-badge" title="前回欠席：配布物を確認">📄</span>` : "";
-    seat.innerHTML=`<span class="num">${attNoOf(sid)}番</span><span class="nm">${seatNameOf(state.classId,sid)}</span><span class="st">${mark}</span>${handoutBadge}`;
+    const PREV_EMOJI={"absent":"🙋","late":"⏰","early":"🏃"};
+    const prevBadge = prevSt ? `<span class="prev-badge" title="前回${STATUS[prevSt].label}">${PREV_EMOJI[prevSt]}</span>` : "";
+    seat.innerHTML=`<span class="num">${attNoOf(sid)}番</span><span class="nm">${seatNameOf(state.classId,sid)}</span><span class="st">${mark}</span>${prevBadge}`;
   }else{
     seat.className=cls+" empty"+(state.mode==="edit"?" editable":"");
     const ghost = fifth ? "5人目" : (idx+1)+"番";
